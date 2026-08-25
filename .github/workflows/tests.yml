@@ -1,0 +1,109 @@
+# scqat is the BASE of the import arrow: SCQO lazy-imports its estimators and fitters
+# from estimate(), so a change here can break experiments downstream without breaking
+# anything in this repo. That failure mode is not hypothetical - the release ledger
+# records it repeatedly as "coupling", usually as a SILENT one (a renamed kwarg an older
+# estimator refuses by name, a fitter that was never registered, a new dataset dimension
+# an older consumer indexes past).
+#
+# So this workflow runs TWO suites: scqat's own, and SCQO's against this scqat. The
+# second is the one that earns its keep.
+#
+# FORK PAIRING mirrors SCQO's workflow: SCQO is resolved from the workflow_dispatch
+# inputs, else <head-owner>/SCQO at a branch matching this run's, else upstream. The
+# resolved choice goes in the run summary so a green tick is never ambiguous. Stays on
+# `pull_request`, never `pull_request_target`, so fork code runs without secrets.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      scqo_repo:
+        description: "owner/SCQO to test against (blank = auto-resolve)"
+        required: false
+        default: ""
+      scqo_ref:
+        description: "SCQO branch or SHA (blank = auto-resolve)"
+        required: false
+        default: ""
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.10"]
+    runs-on: ubuntu-latest
+    env:
+      MPLBACKEND: Agg   # figures are drawn during tests; never touch a GUI backend
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: scqat
+
+      - name: Resolve which SCQO to test against
+        id: scqo
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_REPO: ${{ inputs.scqo_repo }}
+          INPUT_REF: ${{ inputs.scqo_ref }}
+          HEAD_OWNER: ${{ github.event.pull_request.head.repo.owner.login || github.repository_owner }}
+          HEAD_BRANCH: ${{ github.event.pull_request.head.ref || github.ref_name }}
+        run: |
+          set -u
+          repo="$INPUT_REPO"; ref="$INPUT_REF"; why="workflow_dispatch input"
+
+          if [ -z "$repo" ]; then
+            if [ "$HEAD_OWNER" != "shiau109" ] && gh repo view "$HEAD_OWNER/SCQO" >/dev/null 2>&1; then
+              repo="$HEAD_OWNER/SCQO"; why="fork owned by $HEAD_OWNER"
+            else
+              repo="shiau109/SCQO"; why="upstream (no fork found for $HEAD_OWNER)"
+            fi
+          fi
+
+          if [ -z "$ref" ]; then
+            if gh api "repos/$repo/branches/$HEAD_BRANCH" >/dev/null 2>&1; then
+              ref="$HEAD_BRANCH"; why="$why, branch matched"
+            else
+              ref=""; why="$why, default branch (no '$HEAD_BRANCH' there)"
+            fi
+          fi
+
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "ref=$ref"   >> "$GITHUB_OUTPUT"
+          {
+            echo "### SCQO paired with this run"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| repository | \`$repo\` |"
+            echo "| ref | \`${ref:-<default branch>}\` |"
+            echo "| resolved by | $why |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.scqo.outputs.repo }}
+          ref: ${{ steps.scqo.outputs.ref }}
+          path: SCQO
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install scqat then scqo (editable, sibling layout)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./scqat
+          pip install -e "./SCQO[viewer]" pytest httpx
+
+      - name: Run scqat's own suite
+        working-directory: scqat
+        run: python -m pytest -q
+
+      - name: Run SCQO's suite against THIS scqat
+        working-directory: SCQO
+        run: python -m pytest -q

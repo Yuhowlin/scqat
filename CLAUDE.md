@@ -5,7 +5,11 @@ from **either an experiment or a simulation** — estimators must be blind to wh
 It strictly follows a decoupled, Domain-Driven architecture using
 `xarray.Dataset` as the universal data transfer object.
 
-> Cross-repo terminology (Experiment = probe + **estimator**) is defined in `D:\github\SCQO\CLAUDE.md` → Terminology. This repo implements the **estimator** + **tool/fitter** half (the analysis side).
+> Cross-repo terminology (Experiment = probe + **estimator**) is defined in
+> [SCQO](https://github.com/shiau109/SCQO)'s `CLAUDE.md` → Terminology. In short: an **Experiment**
+> is a probe (acquisition) bound to an **estimator** (analysis). This repo implements the estimator
+> + tool/fitter half. SCQO is a CONSUMER of scqat, never a dependency of it - scqat must stay
+> importable on its own.
 
 ## Purpose & Consumption
 `scqat` is a **pip-installable library** (`pyproject.toml`) meant to be imported
@@ -53,14 +57,19 @@ import time.
    `xarray.Dataset` API.
 
 ## Workflow Rules
-1. **Plan Before Implementation:** When asked to generate code, ALWAYS explain
-   your implementation plan first. Do NOT modify any existing code until
-   receiving explicit approval from the user.
+1. **Plan before implementation.** When asked to generate code, explain the plan first.
+   *In the maintainer's tree*, wait for the maintainer's approval before modifying existing
+   code — that checkout is shared and live. Working in your own fork, "approval" is the pull
+   request: propose on a branch, and let review be the gate. Either way the plan comes first,
+   because the architectural rules above (the import arrow, the output contract) are easier to
+   check in a plan than in a diff.
 
 ## Release checklist
-**After committing a release-worthy feature** (before any release): write ONE
-fragment file `D:\github\SCQO\RELEASES.d\<feature-slug>.toml` (format + multi-agent
-rules in `RELEASES.d\README.md`) — especially the scqat-floor coupling when SCQO
+**After committing a release-worthy feature** (maintainers, before any release): write ONE
+fragment file `RELEASES.d/<feature-slug>.toml` **in the SCQO repo** (format + rules in that
+directory's `README.md`). Contributors working from a fork cannot do this and are not expected
+to - draft the fragment in your pull request body instead, and the maintainer commits it once
+the last repo's PR has landed — especially the scqat-floor coupling when SCQO
 lazy-imports something new (silent-failure kind). One file per feature, written as
 the feature's LAST step; the release agent consumes the fragments when cutting the
 combo.
@@ -73,7 +82,7 @@ The digit choice follows SCQO `RELEASING.md`'s version rule, applied to scqat's
 own line (0.x: any breaking/additive fragment → y+1, fix-only → z+1).
 
 The pyproject version MUST equal the tag: dependents (SCQO) declare real floors
-like `scqat>=0.1.4`, resolved from package metadata (`importlib.metadata`), so a
+like `scqat>=0.20.0`, resolved from package metadata (`importlib.metadata`), so a
 tag whose tree still carries the old version breaks every downstream install.
 Never retag or rewrite an existing tag — if a tagged tree has the wrong version,
 cut the next number.
@@ -284,7 +293,7 @@ All fitters inherit from `FunctionFitting` (in
    optional).
 
 ### Testing discipline — run only what the edit can break
-Command (from `D:\github\scqat`): `uv run --extra dev pytest tests/test_ramsey_estimator.py -q`.
+Command (from the repo root): `uv run --extra dev pytest tests/test_ramsey_estimator.py -q`.
 **`--extra dev` is required** — pytest is an optional-dependency extra, so bare `uv run pytest`
 dies with `Failed to spawn: pytest`. Tests are named after what they test, so selection is by
 **file name**, not `-k`. The blast radius follows the import arrow (rule 3): an estimator edit is
@@ -298,60 +307,80 @@ local; a `tools/` edit reaches every family that imports it.
 | estimator↔tool structure (new subpackage, moved import) | add `tests/test_no_estimator_layering.py` — the static capstone for "estimators never call estimators" |
 | `core/base_estimator.py`, `tools/function_fitting.py`, `estimators/__init__.py` | **full suite** — the `analyze()` orchestrator, the `FunctionFitting` base of every fitter, and the aggregate import touch everything |
 
-Who consumes each tool (re-check with `grep -rl "tools.<x>" scqat/estimators/`):
+<!-- BEGIN generated: tool-consumers -->
+**GENERATED** - refresh with `python scripts/update_docs.py`. A `tools/` edit reaches
+every family listed beside it; run those families' test files too.
 
 | tool | consuming estimator families |
 |---|---|
+| `ade_decay` | qubit_t1_ade |
+| `allan` | qubit_t1_bayesian |
+| `dip_finder` | broadband_resonator_spectroscopy |
 | `dip_fit` | resonator_spectroscopy, resonator_spectroscopy_flux, resonator_spectroscopy_power |
-| `peak_fit` | ac_stark_shift, parametric_drive_resonance, qubit_spectroscopy, qubit_spectroscopy_flux, readout_pulse_photon |
-| `peak_map` | parametric_drive_resonance, qubit_spectroscopy_flux (+ `tests/test_flux_ref_scope.py`, which covers `track_flux_peaks`) |
-| `iq_reduce` | power_rabi, qubit_echo, qubit_relaxation, qubit_spectroscopy_flux, ramsey (+ `tests/test_stored_positions.py`, the `reduced_signal` priority chain) |
-| `discriminate` | qubit_tomography, readout_fidelity, state_discrimination, parity_switch_continuous, parity_switch_discrete |
+| `discriminate` | parity_switch_continuous, parity_switch_discrete, qubit_tomography, readout_fidelity, state_discrimination |
+| `fit_abscos` | charge_gate_ramsey |
+| `fit_cosine` | power_rabi, swap_oscillation |
+| `fit_damped_oscillation` | qubit_echo_flux, zz_interaction |
+| `fit_exp_decay` | qubit_echo, qubit_echo_flux, qubit_relaxation, qubit_relaxation_flux, qubit_t1_bayesian |
+| `fit_gaussian2d` | single_state_outlier |
+| `fit_lorentzian_bg` | resonator_spectroscopy |
+| `fit_notch_circle` | resonator_spectroscopy |
+| `fit_powerlaw_base` | qubit_sqrb |
+| `fit_qubit_decoherence` | qubit_decoherence |
+| `fit_stretched_exp` | ramsey_phasor |
+| `fit_transmon_freq_flux` | qubit_flux_arch |
+| `fit_triangle` | xyz_delay |
+| `iq_reduce` | power_rabi, qubit_deterministic_benchmarking, qubit_echo, qubit_relaxation, qubit_spectroscopy_flux, qubit_stark_phase_echo, ramsey, xyz_delay |
+| `lockin` | ramsey_cryoscope, ramsey_phasor |
+| `peak_fit` | ac_stark_shift, broadband_qubit_spectroscopy, parametric_drive_resonance, qubit_spectroscopy, qubit_spectroscopy_flux, readout_pulse_photon, spectroscopy_cryoscope |
+| `peak_map` | parametric_drive_resonance, qubit_spectroscopy_flux |
+| `ramsey_fit` | charge_gate_ramsey, ramsey |
+| `robust` | resonator_spectroscopy_flux |
+| `step_response_fit` | ramsey_cryoscope, spectroscopy_cryoscope |
 | `telegraph_psd` | parity_switch_continuous, parity_switch_discrete |
 | `timeseries_psd` | qubit_t1_bayesian |
-| `allan` | qubit_t1_bayesian |
-| `ade_decay` | qubit_t1_ade |
-| `hankel_analysis` | none — workflows only; `tests/test_hankel_analysis.py` alone |
 
-**Coverage gap — do not paper over it.** 9 of 27 estimators are imported by NO test, by module
-path or exported class: `ac_stark_shift`, `charge_gate_ramsey`, `qubit_decoherence`,
-`qubit_drag_equator`, `qubit_drag_alternating`, `qubit_sqrb`, `readout_pulse_photon`,
-`single_state_outlier`, `zz_interaction`. If the edit is in one of them, say so plainly instead of
-reporting a targeted run as though it proved something. **This is deliberate, not neglect:** these
-are not yet part of the scqo system, and each gets its tests when it is promoted in — SCQO's
-promotion checklist already requires "`simulate()` implemented → offline end-to-end test in
-`tests/`". Do not open a campaign to backfill them. Re-derive the list with:
-`for e in $(ls scqat/estimators/ | grep -v '\.py\|__'); do ... grep -rlE "estimators\.$e\b|\b<Class>\b" tests/; done`
-— name-matching `ls tests/` is NOT enough (`test_fit_qubit_decoherence.py` tests the *fitter*,
-not the estimator; `test_qubit_tomography.py` imports only the class name).
+No estimator imports these (shared machinery, workflow-only, or a fitter reached through
+the `get_fitter()` factory): `fit_damping_beat`, `fit_lorentzian`, `fit_multi_damped_oscillation`, `flux_predistortion`, `function_fitting`, `ge_discriminator`, `hankel`.
+<!-- END generated: tool-consumers -->
 
-The **full suite** (`uv run --extra dev pytest -q`, ~84 s / 329 tests) is for cutting a release or
+**Coverage gap — do not paper over it.** If your edit is in one of the estimators below, say
+so plainly instead of reporting a targeted run as though it proved something. **This is
+deliberate, not neglect:** these are not yet part of the scqo system, and each gets its tests
+when it is promoted in — SCQO's promotion checklist already requires "`simulate()` implemented
+→ offline end-to-end test in `tests/`". Do not open a campaign to backfill them.
+
+<!-- BEGIN generated: coverage-gap -->
+**GENERATED** - refresh with `python scripts/update_docs.py`. **10 of 43**
+estimators are imported by NO test, by module path or exported class:
+
+- `ac_stark_shift`
+- `broadband_qubit_spectroscopy`
+- `charge_gate_ramsey`
+- `qubit_decoherence`
+- `qubit_drag_alternating`
+- `qubit_drag_equator`
+- `qubit_sqrb`
+- `readout_pulse_photon`
+- `single_state_outlier`
+- `zz_interaction`
+<!-- END generated: coverage-gap -->
+
+The **full suite** (`uv run --extra dev pytest -q`) is for cutting a release or
 a shared-core edit (row 5). Otherwise **report the exact command run** and offer the full-suite
 command rather than spending the time unasked.
 
-## Offline analysis on saved data (`analysis/`)
-Iterate on estimators against **real saved runs** (`ds_raw.h5` / `plotdata_*.h5` produced by a
-driver such as LCHQM) without re-running hardware. The reusable engine is
-`analysis/_harness.py`; per-experiment entry points are thin `# %%`-cell scripts
-(`analysis/try_<experiment>.py`).
+## Offline analysis on saved data
+Estimators can be iterated against **real saved runs** (`ds_raw.h5` / `plotdata_*.h5` written
+by a driver) without re-running hardware. A saved `plotdata_*.h5` *is* the estimator-native
+`build_plot_data` Dataset (see **Estimator Output Contract**): reload it with
+`from scqat.parsers import load_xarray_h5` and draw via
+`estimator.generate_figures(None, None, plot_data=…)` — no re-fit, no parsing. That is the
+whole trick; a scratch `# %%`-cell script per experiment is enough scaffolding.
 
-1. **`.py` + `# %%` cells, not `.ipynb`.** Notebook UX in VS Code (run-cell, inline figures) but
-   git-friendly files (clean diffs, reviewable, importable). Real notebooks stay in `notebooks/`.
-2. **Reuse the engine; never re-implement load/slice/plot per file.** `_harness.py` provides
-   `load(path)`, `slices(ds, prep)`, `compare(slices, methods)`,
-   `estimator_method(est, adapt, **kwargs)`, and `replot(est, slices_ | from_plotdata=…)`. A
-   per-experiment `try_<exp>.py` sets only: the data path, `prep` (raw → estimator input),
-   `adapt` (`results` → normalized plot fields), and the methods to compare.
-3. **Three uses, one engine:** (A) try a new approach — compare a custom method against the
-   estimator; (B) test parameters — the estimator across a kwarg grid (e.g. `min_snr` /
-   `prominence`); (C) replot a plot-skipped run — re-fit from `ds_raw`, or with **no re-fit**
-   from a saved `plotdata_*.h5` via `replot(..., from_plotdata=<run dir or file>)`.
-4. **Validate estimator changes against real saved data before committing**, stating the
-   expected truth (e.g. a noise sweep → 0 peaks; a two-transition sweep → both peaks). But
-   **never put external/absolute data paths in `tests/`** — tests use synthetic data or a small
-   committed fixture (e.g. `notebooks/charge_gate_ramsey_plot_payload.h5`); `analysis/` is the
-   only place path-based exploration lives.
+The maintainer's own exploration tree (`analysis/`, `notebooks/`, `temp/`) is **not published**
+— it holds absolute paths into lab storage and is kept local. Nothing in `tests/` depends on it.
 
-A saved `plotdata_*.h5` *is* the estimator-native `build_plot_data` Dataset (see **Estimator
-Output Contract**): reload it with `from scqat.parsers import load_xarray_h5` and draw via
-`estimator.generate_figures(None, None, plot_data=…)` — no re-fit, no parsing.
+**Never put external or absolute data paths in `tests/`.** Tests use synthetic data or a small
+committed fixture; path-based exploration belongs in your own scratch scripts, which is exactly
+why that tree is unpublished.
