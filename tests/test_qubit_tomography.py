@@ -125,10 +125,17 @@ def test_interleaved_noise_tomography():
     I_tomo = np.zeros((2, 3, 2, 3, n_shot))
     Q_tomo = np.zeros((2, 3, 2, 3, n_shot))
 
-    # Noise OFF points near center 0
-    I_tomo[0] = centers[0][0] + sigma * rng.standard_normal((3, 2, 3, n_shot))
-    # Noise ON points near center 1
-    I_tomo[1] = centers[1][0] + sigma * rng.standard_normal((3, 2, 3, n_shot))
+    # The `inv` slice must carry the INVERTED outcome, as the probe plays it: the
+    # estimator symmetrises each condition as (p_reg + (1 - p_inv)) / 2, which maps
+    # a UNIFORM population to exactly 0.5 whatever its value. Filling reg and inv
+    # alike therefore reads 0.5 for both conditions, and the differential drift this
+    # test exists to measure comes out identically zero.
+    # Noise OFF: reg near center 0, inv near center 1  -> symmetrises to 0
+    I_tomo[0, :, 0] = centers[0][0] + sigma * rng.standard_normal((3, 3, n_shot))
+    I_tomo[0, :, 1] = centers[1][0] + sigma * rng.standard_normal((3, 3, n_shot))
+    # Noise ON:  reg near center 1, inv near center 0  -> symmetrises to 1
+    I_tomo[1, :, 0] = centers[1][0] + sigma * rng.standard_normal((3, 3, n_shot))
+    I_tomo[1, :, 1] = centers[0][0] + sigma * rng.standard_normal((3, 3, n_shot))
 
     ds = xr.Dataset(
         {
