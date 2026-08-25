@@ -156,6 +156,44 @@ class TestParametricDriveDecoherenceEstimator:
         assert pd["gamma"].dims == ("driving_frequency",)
         assert "ep_metric" in pd
 
+    def test_figures_render_on_a_failed_fit(self, tmp_path):
+        """Pure noise makes the three-stage pipeline degenerate, but the raw
+        rho_11 traces must still be drawn: both figures render and both PNGs
+        land. `build_plot_data` degrades a failed fit to NaN rather than
+        dropping the field, and `plot_rho11_fits` guards its overlay."""
+        freqs = np.linspace(330e6, 336e6, 3)
+        t = np.linspace(0.0, 3000.0, 60)
+        rng = np.random.default_rng(7)
+        noise = rng.normal(0.5, 0.05, (freqs.size, t.size))
+        ds = xr.Dataset(
+            {"state": (("driving_frequency", "driving_time"), noise)},
+            coords={"driving_frequency": freqs, "driving_time": t},
+        )
+        est = ParametricDriveDecoherenceEstimator()
+        _, figs = est.analyze(ds, output_dir=str(tmp_path), **_KW)
+        assert set(figs) == {"decoherence_params", "rho11_fits"}
+        assert (tmp_path / "parametric_drive_decoherence_rho11_fits.png").exists()
+        plt.close("all")
+
+    def test_a_broken_plotter_does_not_drop_its_sibling(self, monkeypatch):
+        """The isolation itself: the pure-FIT panel raising must not take the
+        raw-carrying rho11_fits figure down with it. SCQO's artifact fallback
+        drops ALL figures on any single plotter exception, so one broken panel
+        would otherwise cost the run every PNG."""
+        import scqat.estimators.parametric_drive_decoherence.estimator as mod
+
+        def boom(_plot_data):
+            raise RuntimeError("degenerate fit panel")
+
+        monkeypatch.setattr(mod, "plot_decoherence_params", boom)
+        ds, _ = _make_rho11_only(n_freq=2, n_time=40)
+        est = ParametricDriveDecoherenceEstimator()
+        res = est.extract_parameters(ds, **_KW)
+        with pytest.warns(UserWarning, match="decoherence_params"):
+            figs = est.generate_figures(ds, res)
+        assert set(figs) == {"rho11_fits"}
+        plt.close("all")
+
     def test_analyze_roundtrip(self, tmp_path):
         ds, _ = _make_rho11_only()
         est = ParametricDriveDecoherenceEstimator()

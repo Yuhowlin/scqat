@@ -49,6 +49,7 @@ import matplotlib.pyplot as plt
 import xarray as xr
 
 from scqat.core.base_estimator import BaseEstimator
+from scqat.core.figures import render_figures
 from scqat.workflows.ep_pipeline import (
     build_rho_dataset,
     squeeze_singleton_dims,
@@ -297,10 +298,19 @@ class ParametricDriveDecoherenceEstimator(BaseEstimator):
     ) -> Dict[str, plt.Figure]:
         """Two figures, drawn entirely from ``plot_data``:
         ``decoherence_params`` (γ, λ, |Δ|, 8λ²/γ² vs driving_frequency) and
-        ``rho11_fits`` (ρ₁₁(t) data + fit, coloured by driving_frequency)."""
+        ``rho11_fits`` (ρ₁₁(t) data + fit, coloured by driving_frequency).
+
+        Built through :func:`render_figures` so the two are INDEPENDENT: the
+        raw-carrying ``rho11_fits`` must survive a crash in the pure-fit
+        ``decoherence_params`` panel. A consumer that saves artifacts (SCQO)
+        drops ALL figures on any single plotter exception, so without the
+        isolation one broken panel would cost the run every PNG."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
-        return {
-            "decoherence_params": plot_decoherence_params(plot_data),
-            "rho11_fits": plot_rho11_fits(plot_data),
-        }
+        return render_figures(
+            {
+                "decoherence_params": lambda: plot_decoherence_params(plot_data),
+                "rho11_fits": lambda: plot_rho11_fits(plot_data),
+            },
+            label=self.estimator_name,
+        )
