@@ -39,6 +39,7 @@ from scqat.estimators.pair_swap_flux_map import PairSwapFluxMapEstimator
 from scqat.estimators.qc_n_swap_amp import QcNSwapAmpEstimator
 from scqat.estimators.qc_n_stark_amp import QcNStarkAmpEstimator
 from scqat.estimators.ramsey_cryoscope import RamseyCryoscopeEstimator
+from scqat.estimators.ramsey_phasor import RamseyPhasorEstimator
 from scqat.estimators.spectroscopy_cryoscope import SpectroscopyCryoscopeEstimator
 from scqat.estimators.broadband_resonator_spectroscopy import (
     BroadbandResonatorSpectroscopyEstimator,
@@ -91,6 +92,7 @@ __all__ = [
     "QcNSwapAmpEstimator",
     "QcNStarkAmpEstimator",
     "RamseyCryoscopeEstimator",
+    "RamseyPhasorEstimator",
     "SpectroscopyCryoscopeEstimator",
     "XyzDelayEstimator",
     "QubitStarkPhaseEchoEstimator",

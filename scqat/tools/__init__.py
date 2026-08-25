@@ -32,6 +32,7 @@ from .discriminate import (
 )
 from .ge_discriminator import compute_ge_discriminator
 from .ramsey_fit import RAMSEY_MODELS, fit_ramsey
+from .lockin import lockin_phasor
 from .flux_predistortion import (
     MIN_A_DC,
     exp_sum_step_response,
@@ -75,4 +76,5 @@ from . import fit_lorentzian_bg  # noqa: F401
 from . import fit_notch_circle  # noqa: F401
 from . import fit_powerlaw_base  # noqa: F401
 from . import fit_qubit_decoherence  # noqa: F401
+from . import fit_stretched_exp  # noqa: F401
 from . import fit_transmon_freq_flux  # noqa: F401

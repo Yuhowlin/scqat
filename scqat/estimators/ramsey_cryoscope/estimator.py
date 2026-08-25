@@ -7,6 +7,7 @@ from scipy.signal import savgol_filter
 
 from scqat.core.base_estimator import BaseEstimator, with_iqdata
 from scqat.core.figures import render_figures
+from scqat.tools.lockin import lockin_phasor
 from scqat.tools.step_response_fit import fit_step_response, mpm_tau_seeds
 from scqat.estimators.ramsey_cryoscope.visualization import plot_step_response, plot_phase_freq
 
@@ -124,8 +125,8 @@ class RamseyCryoscopeEstimator(BaseEstimator):
         frame = np.asarray(cplx.coords["frame"].values, dtype=float)
 
         # 1. complex lock-in at one cycle per turn -> phase per duration
-        kernel = np.exp(-2j * np.pi * frame)
-        proj = (cplx.values * kernel[None, :]).mean(axis=1)
+        # (the shared reduction — ramsey_phasor consumes the same projection)
+        proj = lockin_phasor(cplx.values, frame, axis=1)
         phase = np.unwrap(np.angle(proj))
 
         # 2-3. Savitzky-Golay derivative of phase/(2*pi) -> detuning in Hz.
