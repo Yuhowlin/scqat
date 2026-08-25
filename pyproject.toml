@@ -10,9 +10,10 @@ version = "0.20.0"  # MUST equal the release tag (tag vX.Y.Z <-> version X.Y.Z);
                    # all shipped metadata 0.1.0 -- floors only work from v0.1.5 on.)
 description = "Superconducting qubit analysis tool for experimental data pipelines."
 authors = [
-    {name = "Your Name", email = "your.email@example.com"}
+    {name = "Li-Chieh Hsiao", email = "shiau109@gmail.com"}
 ]
 readme = "README.md"
+license = { text = "BSD-3-Clause" }
 requires-python = ">=3.9"
 dependencies = [
     "numpy>=1.24.0",

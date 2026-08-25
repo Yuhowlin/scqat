@@ -43,15 +43,21 @@ from scqat.parsers.xarray_h5_parser import load_xarray_h5
 from scqat.parsers import repetition_data
 from scqat.estimators import ParametricDriveDecoherenceEstimator
 
-# --- Example data on disk (point these at your own ds_raw.h5 if they move) ----
+# --- Example data on disk -----------------------------------------------------
+# These are the run folders this example was written against. Set
+# SCQAT_EXAMPLE_DATA_ROOT to the directory holding them, or just pass your own
+# ds_raw.h5 on the command line (see the README). With the variable unset the
+# paths stay relative and simply will not be found, which the script reports.
+_DATA_ROOT = os.environ.get("SCQAT_EXAMPLE_DATA_ROOT", "")
 EXAMPLE_DATA = {
-    "rho11_only": (
-        r"D:/SynologyDrive/LiChiehHsiao/AS/SynologyDrive/data/EP/Parametric_drive/"
-        r"QtoR/20260202/#1354_LCH_qubit_parametric_drive_time_13_034031/ds_raw.h5"
+    "rho11_only": os.path.join(
+        _DATA_ROOT,
+        "QtoR/20260202/#1354_LCH_qubit_parametric_drive_time_13_034031/ds_raw.h5",
     ),
-    "tomography": (
-        r"D:/SynologyDrive/LiChiehHsiao/AS/SynologyDrive/data/EP/Parametric_drive/"
-        r"QtoR/20260210_tomo/x180/#1518_LCH_qubit_parametric_drive_time_tomo_10_001849/ds_raw.h5"
+    "tomography": os.path.join(
+        _DATA_ROOT,
+        "QtoR/20260210_tomo/x180/"
+        "#1518_LCH_qubit_parametric_drive_time_tomo_10_001849/ds_raw.h5",
     ),
 }
 OUTPUT_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
