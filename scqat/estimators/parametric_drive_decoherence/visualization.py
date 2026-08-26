@@ -1,9 +1,18 @@
 """
 Parametric-drive decoherence plotting helpers.
 
-Both functions consume the **plot_data** Dataset built by
+All three functions consume the **plot_data** Dataset built by
 ``ParametricDriveDecoherenceEstimator.build_plot_data`` and draw without any
 recalculation.
+
+* :func:`plot_rho11_map` — the RAW 2-D map, driving frequency x driving time,
+  coloured by population. Drawn from ``rho11_data``, which is filled at every
+  frequency whether or not that frequency's fit converged, so this figure is
+  the one that always has something to show.
+* :func:`plot_rho11_fits` — the same rho_11 as per-frequency traces, with the
+  fitted curve overlaid where it exists.
+* :func:`plot_decoherence_params` — the pure-FIT view: gamma, lambda, |Delta|
+  and the EP figure of merit vs driving frequency.
 
 plot_data layout
 ----------------
@@ -19,10 +28,86 @@ import matplotlib.pyplot as plt
 import numpy as np
 import xarray as xr
 
+#: how far outside [0, 1] a value may sit and still count as a population. The
+#: estimator accepts a raw quadrature as a last resort (its state-variable
+#: candidates end in ``I``), and volts are not a population — the map falls back
+#: to autoscaling rather than rendering a blank panel under a 0-1 clamp.
+_POPULATION_TOL = 0.05
+
+
+def _value_ylim(y, pad: float = 0.08):
+    """Axis limits from the VALUES alone — ``None`` when there are none.
+
+    ``plot_decoherence_params`` draws error bars, and matplotlib's autoscale
+    counts the bar CAPS as data. One non-converged frequency can carry a
+    ``gamma_err`` orders of magnitude past the value range, which rescales the
+    panel and flattens every real point into a flat line. Limits therefore come
+    from the finite values only; the bars are still drawn and simply clip at the
+    axes, so a bad fit still reads as a bar running off-panel.
+
+    The scalar arrays are pre-filled ``np.full(n_freq, np.nan)`` and only
+    overwritten where the fit converged, so an all-failed run reaches here
+    all-NaN — hence the empty check rather than a bare ``np.nanmin``, which
+    would warn and return NaN limits."""
+    finite = np.asarray(y, dtype=float)
+    finite = finite[np.isfinite(finite)]
+    if finite.size == 0:
+        return None
+    lo, hi = float(finite.min()), float(finite.max())
+    if lo == hi:  # a single converged frequency — do not ask for a zero-height axis
+        span = abs(lo) or 1.0
+        return lo - 0.5 * span, hi + 0.5 * span
+    span = hi - lo
+    return lo - pad * span, hi + pad * span
+
+
+def plot_rho11_map(plot_data: xr.Dataset) -> plt.Figure:
+    """The RAW 2-D map: driving frequency (x) x driving time (y), coloured by
+    population.
+
+    This is the figure that survives everything — ``rho11_data`` is written for
+    every frequency before the per-frequency fit is even attempted, so a run
+    where every fit failed still draws its chevron here.
+
+    ``rho11_data`` is stored ``(driving_frequency, driving_time)`` and
+    ``pcolormesh`` wants ``(len(y), len(x))``, hence the transpose."""
+    f_mhz = plot_data.coords["driving_frequency"].values.astype(float) / 1e6
+    t_ns = plot_data.coords["driving_time"].values.astype(float)
+    rho = plot_data["rho11_data"].values  # (driving_frequency, driving_time)
+
+    # A population is bounded, so fix the scale at [0, 1] and make runs
+    # comparable; a raw quadrature is not, and clamping volts to [0, 1] would
+    # render a blank panel for a run that is already wrong.
+    finite = rho[np.isfinite(rho)]
+    is_population = bool(
+        finite.size
+        and finite.min() >= -_POPULATION_TOL
+        and finite.max() <= 1.0 + _POPULATION_TOL
+    )
+    limits = {"vmin": 0.0, "vmax": 1.0} if is_population else {}
+
+    fig, ax = plt.subplots(figsize=(10, 6), dpi=120)
+    pcm = ax.pcolormesh(f_mhz, t_ns, rho.T, shading="auto", cmap="viridis", **limits)
+    fig.colorbar(pcm, ax=ax,
+                 label=r"$\rho_{11}$" if is_population else "Signal (arb. u.)")
+    ax.set_xlabel("Driving frequency (MHz)")
+    ax.set_ylabel("Driving time (ns)")
+
+    kind = "tomography" if plot_data.attrs.get("has_tomography", 0) else r"$\rho_{11}$-only"
+    note = "" if is_population else " — NOT a population (raw quadrature?)"
+    ax.set_title(f"Parametric-drive chevron [{kind}]{note}")
+    fig.tight_layout()
+    return fig
+
 
 def plot_decoherence_params(plot_data: xr.Dataset) -> plt.Figure:
     """4-panel summary of the fitted decoherence parameters vs driving frequency:
-    γ, λ, |Δ| (with error bars) and the EP figure of merit 8λ²/γ²."""
+    γ, λ, |Δ| (with error bars) and the EP figure of merit 8λ²/γ².
+
+    The three error-bar panels scale to their VALUES, not their bars — see
+    :func:`_value_ylim`. The EP panel is deliberately left on autoscale: it
+    carries no error bars, and a large 8λ²/γ² is exactly what it exists to
+    show."""
     f_mhz = plot_data.coords["driving_frequency"].values.astype(float) / 1e6
     gamma = plot_data["gamma"].values
     lam = plot_data["lambda_"].values
@@ -41,6 +126,10 @@ def plot_decoherence_params(plot_data: xr.Dataset) -> plt.Figure:
     ]
     for ax, y, yerr, ylabel, title in panels:
         ax.errorbar(f_mhz, y, yerr=yerr, fmt="o-", ms=4, capsize=2)
+        # the ERROR BARS must not set the scale (see _value_ylim)
+        ylim = _value_ylim(y)
+        if ylim is not None:
+            ax.set_ylim(*ylim)
         ax.set_xlabel("Driving frequency (MHz)")
         ax.set_ylabel(ylabel)
         ax.set_title(title)

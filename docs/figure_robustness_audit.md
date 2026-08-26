@@ -37,7 +37,8 @@ sibling raise drops the raw figure too).
 
 `qc_n_swap_amp`, `pair_swap_flux_map`, `pair_swap_chevron`, `parametric_drive_resonance`,
 `parametric_drive_decoherence` (migrated — `render_figures` + a failed-fit test; its
-`plot_rho11_fits` already guarded the overlay with `np.isfinite(fit[i]).any()`),
+`plot_rho11_fits` already guarded the overlay with `np.isfinite(fit[i]).any()`, and it
+since gained `rho11_map`, an unconditional raw 2-D chevron listed FIRST),
 `qubit_spectroscopy_flux`, `qubit_flux_arch`, `qubit_relaxation_flux`, `qubit_echo_flux`,
 `resonator_spectroscopy{,_flux,_power}`, `power_rabi`, `swap_oscillation`, `xyz_delay`,
 `qubit_drag_equator`, `qubit_drag_alternating`, `qubit_deterministic_benchmarking`,

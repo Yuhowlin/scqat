@@ -21,6 +21,10 @@ from scqat.estimators import ParametricDriveDecoherenceEstimator
 from scqat.estimators.parametric_drive_decoherence import (
     ParametricDriveDecoherenceEstimator as SubpkgEstimator,
 )
+from scqat.estimators.parametric_drive_decoherence.visualization import (
+    plot_decoherence_params,
+    plot_rho11_map,
+)
 from scqat.tools.fit_qubit_decoherence import rho11_model
 
 
@@ -158,9 +162,11 @@ class TestParametricDriveDecoherenceEstimator:
 
     def test_figures_render_on_a_failed_fit(self, tmp_path):
         """Pure noise makes the three-stage pipeline degenerate, but the raw
-        rho_11 traces must still be drawn: both figures render and both PNGs
+        rho_11 must still be drawn: all three figures render and the raw PNGs
         land. `build_plot_data` degrades a failed fit to NaN rather than
-        dropping the field, and `plot_rho11_fits` guards its overlay."""
+        dropping the field, `plot_rho11_fits` guards its overlay, and
+        `plot_decoherence_params` tolerates all-NaN scalars when it computes its
+        value-only y-limits."""
         freqs = np.linspace(330e6, 336e6, 3)
         t = np.linspace(0.0, 3000.0, 60)
         rng = np.random.default_rng(7)
@@ -171,15 +177,16 @@ class TestParametricDriveDecoherenceEstimator:
         )
         est = ParametricDriveDecoherenceEstimator()
         _, figs = est.analyze(ds, output_dir=str(tmp_path), **_KW)
-        assert set(figs) == {"decoherence_params", "rho11_fits"}
+        assert set(figs) == {"rho11_map", "rho11_fits", "decoherence_params"}
         assert (tmp_path / "parametric_drive_decoherence_rho11_fits.png").exists()
+        assert (tmp_path / "parametric_drive_decoherence_rho11_map.png").exists()
         plt.close("all")
 
-    def test_a_broken_plotter_does_not_drop_its_sibling(self, monkeypatch):
+    def test_a_broken_plotter_does_not_drop_its_siblings(self, monkeypatch):
         """The isolation itself: the pure-FIT panel raising must not take the
-        raw-carrying rho11_fits figure down with it. SCQO's artifact fallback
-        drops ALL figures on any single plotter exception, so one broken panel
-        would otherwise cost the run every PNG."""
+        raw-carrying rho11_map and rho11_fits down with it. SCQO's artifact
+        fallback drops ALL figures on any single plotter exception, so one broken
+        panel would otherwise cost the run every PNG."""
         import scqat.estimators.parametric_drive_decoherence.estimator as mod
 
         def boom(_plot_data):
@@ -191,7 +198,70 @@ class TestParametricDriveDecoherenceEstimator:
         res = est.extract_parameters(ds, **_KW)
         with pytest.warns(UserWarning, match="decoherence_params"):
             figs = est.generate_figures(ds, res)
-        assert set(figs) == {"rho11_fits"}
+        assert set(figs) == {"rho11_map", "rho11_fits"}
+        plt.close("all")
+
+    def test_rho11_map_is_the_chevron_with_a_population_scale(self):
+        """x = driving frequency (MHz), y = driving time (ns), z = population.
+        rho11_data is stored (frequency, time) and pcolormesh wants (y, x), so a
+        transposed-array regression would show up as swapped axis lengths."""
+        ds, _ = _make_rho11_only(n_freq=4, n_time=30)
+        est = ParametricDriveDecoherenceEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds, **_KW))
+        fig = plot_rho11_map(pd)
+        ax = fig.axes[0]
+        assert "MHz" in ax.get_xlabel() and "frequency" in ax.get_xlabel().lower()
+        assert "ns" in ax.get_ylabel() and "time" in ax.get_ylabel().lower()
+        # the y axis spans the TIME window, not the frequency one
+        t = pd.coords["driving_time"].values
+        lo, hi = ax.get_ylim()
+        assert lo <= float(t.min()) and hi >= float(t.max())
+        # rho_11 is a population, so the colour scale is pinned to [0, 1]
+        assert fig.axes[0].collections[0].get_clim() == (0.0, 1.0)
+        plt.close("all")
+
+    def test_rho11_map_autoscales_when_the_data_is_not_a_population(self):
+        """The estimator takes a raw quadrature as a last resort. Volts clamped
+        to [0, 1] would render a blank panel for a run that is already wrong, so
+        the map autoscales and says so instead."""
+        ds, _ = _make_rho11_only(n_freq=3, n_time=20)
+        ds = ds.assign(state=ds["state"] * 400.0 - 120.0)  # volts, not P(|1>)
+        est = ParametricDriveDecoherenceEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds, **_KW))
+        fig = plot_rho11_map(pd)
+        assert fig.axes[0].collections[0].get_clim() != (0.0, 1.0)
+        assert "NOT a population" in fig.axes[0].get_title()
+        plt.close("all")
+
+    def test_error_bars_do_not_set_the_y_limits(self):
+        """One non-converged frequency can carry a gamma_err orders of magnitude
+        past the value range; matplotlib counts the bar caps as data, so the
+        panel would rescale and flatten every real point. The limits must follow
+        the VALUES."""
+        ds, _ = _make_rho11_only(n_freq=4, n_time=40)
+        est = ParametricDriveDecoherenceEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds, **_KW))
+        gamma = pd["gamma"].values
+        span = float(np.nanmax(gamma) - np.nanmin(gamma)) or float(np.nanmax(gamma))
+        blown = pd.copy()
+        blown["gamma_err"] = ("driving_frequency",
+                              np.full(gamma.size, 1e6 * max(span, 1e-9)))
+        fig = plot_decoherence_params(blown)
+        lo, hi = fig.axes[0].get_ylim()  # the gamma panel
+        assert hi - lo < 10 * span, "the error bar set the scale"
+        assert lo <= float(np.nanmin(gamma)) and hi >= float(np.nanmax(gamma))
+        plt.close("all")
+
+    def test_decoherence_params_renders_with_all_nan_scalars(self):
+        """The all-failed run reaches the y-limit helper all-NaN (the scalars are
+        pre-filled np.full(n_freq, np.nan)); a bare np.nanmin would warn and
+        return NaN limits."""
+        ds, _ = _make_rho11_only(n_freq=3, n_time=20)
+        est = ParametricDriveDecoherenceEstimator()
+        pd = est.build_plot_data(ds, est.extract_parameters(ds, **_KW))
+        for key in ("gamma", "gamma_err", "lambda_", "lambda_err", "Delta", "Delta_err"):
+            pd[key] = ("driving_frequency", np.full(pd.sizes["driving_frequency"], np.nan))
+        assert isinstance(plot_decoherence_params(pd), plt.Figure)
         plt.close("all")
 
     def test_analyze_roundtrip(self, tmp_path):
@@ -200,7 +270,7 @@ class TestParametricDriveDecoherenceEstimator:
         res, figs = est.analyze(ds, output_dir=str(tmp_path), **_KW)
         assert (tmp_path / "parametric_drive_decoherence_metadata.json").exists()
         assert (tmp_path / "parametric_drive_decoherence_plotdata.nc").exists()
-        assert set(figs) == {"decoherence_params", "rho11_fits"}
-        assert isinstance(figs["decoherence_params"], plt.Figure)
-        assert isinstance(figs["rho11_fits"], plt.Figure)
+        assert set(figs) == {"rho11_map", "rho11_fits", "decoherence_params"}
+        for name in ("rho11_map", "rho11_fits", "decoherence_params"):
+            assert isinstance(figs[name], plt.Figure)
         plt.close("all")

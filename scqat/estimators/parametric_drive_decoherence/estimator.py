@@ -63,6 +63,7 @@ from scqat.workflows.ep_pipeline import (
 from scqat.estimators.parametric_drive_decoherence.visualization import (
     plot_decoherence_params,
     plot_rho11_fits,
+    plot_rho11_map,
 )
 
 # Order matters: prefer the discriminated-state variable, then the renamed
@@ -296,21 +297,24 @@ class ParametricDriveDecoherenceEstimator(BaseEstimator):
         plot_data: Optional[xr.Dataset] = None,
         **kwargs,
     ) -> Dict[str, plt.Figure]:
-        """Two figures, drawn entirely from ``plot_data``:
-        ``decoherence_params`` (γ, λ, |Δ|, 8λ²/γ² vs driving_frequency) and
-        ``rho11_fits`` (ρ₁₁(t) data + fit, coloured by driving_frequency).
+        """Three figures, drawn entirely from ``plot_data``, RAW FIRST:
+        ``rho11_map`` (the 2-D chevron, driving_frequency x driving_time coloured
+        by population), ``rho11_fits`` (the same ρ₁₁ as per-frequency traces with
+        the fit overlaid) and ``decoherence_params`` (the pure-fit view: γ, λ,
+        |Δ|, 8λ²/γ² vs driving_frequency).
 
-        Built through :func:`render_figures` so the two are INDEPENDENT: the
-        raw-carrying ``rho11_fits`` must survive a crash in the pure-fit
-        ``decoherence_params`` panel. A consumer that saves artifacts (SCQO)
-        drops ALL figures on any single plotter exception, so without the
+        Built through :func:`render_figures` so the three are INDEPENDENT: the
+        raw-carrying ``rho11_map`` and ``rho11_fits`` must survive a crash in the
+        pure-fit ``decoherence_params`` panel. A consumer that saves artifacts
+        (SCQO) drops ALL figures on any single plotter exception, so without the
         isolation one broken panel would cost the run every PNG."""
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results)
         return render_figures(
             {
-                "decoherence_params": lambda: plot_decoherence_params(plot_data),
+                "rho11_map": lambda: plot_rho11_map(plot_data),
                 "rho11_fits": lambda: plot_rho11_fits(plot_data),
+                "decoherence_params": lambda: plot_decoherence_params(plot_data),
             },
             label=self.estimator_name,
         )
