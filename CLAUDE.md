@@ -33,12 +33,18 @@ import time.
      a given path — whether produced by an experiment or a simulation — and
      converting them to `xarray.Dataset`. NEVER put physics analysis or fitting
      logic here.
-   - `scqat/estimators/`: ONE estimator per experiment (e.g. T1, Ramsey,
-     MIST). They accept an `xarray.Dataset`, process it, and output derived
-     metadata and figures. NEVER put file I/O or raw data loading here.
+   - `scqat/estimators/`: ONE estimator per experiment, and one experiment per
+     estimator — the binding is 1:1 in BOTH directions. An estimator is keyed by
+     a READING: a dataset shape AND the model fitted to it. They accept an
+     `xarray.Dataset`, process it, and output derived metadata and figures.
+     NEVER put file I/O or raw data loading here. Wanting to bind a sibling's
+     estimator is the signal that either the two experiments are one, or the
+     shared part is a reduction — see **Sharing without a second binding**.
    - `scqat/tools/`: Shared, **pure** mathematical algorithms (fitting,
      FFTs, Hankel analysis, analytical solvers). Anything used by more than one
-     estimator lives here.
+     estimator lives here — THE sanctioned way to share math, and load-bearing
+     under the 1:1 rule above. A `tools/` fitter is a numerical ROUTINE and is
+     reused freely; an estimator is a MODEL CLAIM and is not.
    - `scqat/workflows/`: Multi-estimator **orchestration pipelines** that chain
      parsers → several estimators/tools for a higher-level analysis (e.g.
      `ep_pipeline.py`). Pipelines return plain data structures; plotting is left
@@ -151,14 +157,41 @@ in the empty step-response panel). Four rules:
 Enforced per estimator by a "figures render on a failed fit" test (reference:
 `tests/test_spectroscopy_cryoscope_estimator.py::...test_figures_render_on_a_failed_fit`).
 
+## Sharing without a second binding
+
+Rule 2's 1:1 binding is a claim about MODELS, not a filing convention. The full text —
+the four layers, the two cautions and the decision procedure — lives in
+[SCQO](https://github.com/shiau109/SCQO)'s `CLAUDE.md` → Terminology, the cross-repo
+source of truth. The scqat-side consequences:
+
+1. **A fitter is reusable; an estimator is not.** `tools/` holds numerical routines any
+   estimator may call. An estimator BINDS A MODEL to an experiment, so two experiments
+   binding one estimator assert the same physics — and if they really do, they are one
+   experiment.
+2. **Same shape is not same model.** Two experiments can hand you
+   character-for-character identical datasets and mean different physics:
+   `qubit_echo_flux_pulse` and `qubit_relaxation_flux_pulse` share
+   `(flux_bias_v, wait_time_ns)` exactly, and correctly have their own estimators. A
+   shared fit that converges on both is a numerical coincidence, not evidence — an
+   AC-Stark-shifted Lorentzian is still a Lorentzian.
+3. **The two sanctioned sharing mechanisms** are `tools/` for math (rule 2 above) and a
+   `_`-prefixed function module directly under `estimators/` for presentation
+   (`_iq_plane.py`, `_pair_swap_maps.py`, `_twin_axis.py`). Importing a sibling estimator
+   CLASS is forbidden and statically enforced — `tests/test_no_estimator_layering.py`.
+4. **Today's non-conforming bindings** are listed with their migrations in SCQO's
+   `tests/test_one_estimator_per_experiment.py` (`KNOWN_VIOLATIONS`). That list may only
+   shrink; never add to it.
+
 ## Multi-method estimators (N approaches, one physics)
 
 When more than one analysis approach can extract the same physical parameters
 (reference implementation: `estimators/resonator_spectroscopy/` — `lorentzian`
 joint-background fit vs `circle` Probst notch fit), structure it as follows:
 
-1. **Still ONE estimator per experiment.** Approaches are *method strategy
-   objects* in a `methods/` subpackage (`methods/base.py` ABC + one module per
+1. **Still ONE estimator per experiment** — this is the branch where the model
+   is one and only the numerics differ, so it does not weaken the 1:1 binding.
+   Approaches are *method strategy objects* in a `methods/` subpackage
+   (`methods/base.py` ABC + one module per
    method + a `METHODS` registry in `methods/__init__.py`); heavy math stays in
    `tools/` fitters. Selection is a plain `method=` kwarg on
    `extract_parameters` (default = the cheap/robust method).
@@ -206,7 +239,11 @@ namespace makes inner options unreachable or silently mis-routed.
    estimator.** Only the per-trace fit is common; how it is driven (candidate
    seeding from the 2-D map, local windows, fallbacks), the cross-axis
    acceptance gates, the second-stage model, and the artifacts are all
-   sweep-specific and belong to the swept experiment's own estimator.
+   sweep-specific and belong to the swept experiment's own estimator. This is the
+   different-MODEL case: the second stage is new physics. Do not read it as
+   licence to write a new estimator whenever an axis is merely RENAMED — that is
+   a `tools/` reduction with two callers (`readout_fidelity` is the cautionary
+   example, and it got the shape of it wrong).
 2. **Flat, fully-owned kwarg surface.** The estimator's primary method axis is
    `method`; a secondary axis is `<thing>_method` (e.g. `dip_method`); every
    kwarg is documented in `extract_parameters`'s docstring. No prefixes, no
