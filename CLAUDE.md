@@ -356,7 +356,7 @@ every family listed beside it; run those families' test files too.
 | `dip_fit` | resonator_spectroscopy, resonator_spectroscopy_flux, resonator_spectroscopy_power |
 | `discriminate` | parity_switch_continuous, parity_switch_discrete, qubit_tomography, readout_fidelity, state_discrimination |
 | `fit_abscos` | charge_gate_ramsey |
-| `fit_cosine` | power_rabi, swap_oscillation |
+| `fit_cosine` | pair_swap_angle, power_rabi, swap_oscillation |
 | `fit_damped_oscillation` | qubit_echo_flux, zz_interaction |
 | `fit_exp_decay` | qubit_echo, qubit_echo_flux, qubit_relaxation, qubit_relaxation_flux, qubit_t1_bayesian |
 | `fit_gaussian2d` | single_state_outlier |
@@ -388,7 +388,7 @@ when it is promoted in — SCQO's promotion checklist already requires "`simulat
 → offline end-to-end test in `tests/`". Do not open a campaign to backfill them.
 
 <!-- BEGIN generated: coverage-gap -->
-**GENERATED** - refresh with `python scripts/update_docs.py`. **10 of 44**
+**GENERATED** - refresh with `python scripts/update_docs.py`. **10 of 46**
 estimators are imported by NO test, by module path or exported class:
 
 - `ac_stark_shift`

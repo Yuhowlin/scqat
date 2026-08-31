@@ -36,9 +36,11 @@ from scqat.estimators.parity_switch_continuous import ParitySwitchContinuousEsti
 from scqat.estimators.parity_switch_discrete import ParitySwitchDiscreteEstimator
 from scqat.estimators.pair_swap_chevron import PairSwapChevronEstimator
 from scqat.estimators.pair_swap_flux_map import PairSwapFluxMapEstimator
+from scqat.estimators.pair_swap_angle import PairSwapAngleEstimator
 from scqat.estimators.qc_n_swap_amp import QcNSwapAmpEstimator
 from scqat.estimators.qc_n_stark_amp import QcNStarkAmpEstimator
 from scqat.estimators.qc_unidirectional_trotter import QcUnidirectionalTrotterEstimator
+from scqat.estimators.qc_trotter_compensation import QcTrotterCompensationEstimator
 from scqat.estimators.ramsey_cryoscope import RamseyCryoscopeEstimator
 from scqat.estimators.ramsey_phasor import RamseyPhasorEstimator
 from scqat.estimators.spectroscopy_cryoscope import SpectroscopyCryoscopeEstimator
@@ -90,9 +92,11 @@ __all__ = [
     "ParitySwitchDiscreteEstimator",
     "PairSwapChevronEstimator",
     "PairSwapFluxMapEstimator",
+    "PairSwapAngleEstimator",
     "QcNSwapAmpEstimator",
     "QcNStarkAmpEstimator",
     "QcUnidirectionalTrotterEstimator",
+    "QcTrotterCompensationEstimator",
     "RamseyCryoscopeEstimator",
     "RamseyPhasorEstimator",
     "SpectroscopyCryoscopeEstimator",

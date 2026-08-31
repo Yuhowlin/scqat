@@ -5,7 +5,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 
 from scqat.core.base_estimator import BaseEstimator
-from scqat.tools.fit_cosine import FitCosine
+from scqat.tools.fit_cosine import fit_swap_oscillation
 from scqat.estimators.swap_oscillation.visualization import plot_rounds_fit
 
 
@@ -42,73 +42,21 @@ class SwapOscillationEstimator(BaseEstimator):
         """
         Fit the swap oscillation and extract its frequency (cycles per swap).
 
+        The fit itself is the shared per-trace reduction
+        :func:`scqat.tools.fit_cosine.fit_swap_oscillation` (two phase seeds, a
+        contrast gate and an R^2 gate), so this estimator and the per-row map fit
+        in ``pair_swap_angle`` cannot drift apart.
+
         Returns a dict with:
-            a, f, phi, c, swap_period, r_squared, success, best_fit,
+            a, f, phi, c, theta_rad, swap_period, r_squared, success, best_fit,
             round_dense, best_fit_dense, fit_report.
         """
-        # Prepare a DataArray with an 'x' coordinate for the FitCosine fitter.
-        fit_data = dataset["signal"].rename({"round": "x"}).squeeze()
-
-        # FitCosine bounds the amplitude a >= 0, so a single phi=0 seed can get trapped
-        # at a flat (a~0) fit for a qubit whose population *rises* from zero (the swap
-        # target, which needs phi ~ pi). Fit with both phase seeds and keep the
-        # lower-residual result so the extraction is robust to which qubit is measured.
-        fit_result = None
-        for phi_seed in (0.0, np.pi):
-            fitter = FitCosine(fit_data)
-            fitter.guess()
-            fitter.params["phi"].set(value=phi_seed)
-            res = fitter.fit()
-            if fit_result is None or res.chisqr < fit_result.chisqr:
-                fit_result = res
-        p = {k: v.value for k, v in fit_result.params.items()}  # a, f, phi, c
-
+        signal = dataset["signal"].squeeze()
         rounds = np.asarray(dataset.coords["round"].values, dtype=float)
-        nyquist = 0.5 / float(np.min(np.diff(rounds))) if rounds.size > 1 else float("nan")
-        swap_period = 1.0 / p["f"] if p["f"] > 0 else float("nan")
-
-        # Reject a degenerate (flat) fit: a real swap oscillation has a ~ half the
-        # signal peak-to-peak, so guard against a ~ 0 falsely reporting success.
-        ptp = float(np.ptp(np.asarray(fit_data.values, dtype=float)))
-        contrast_ok = ptp > 0 and p["a"] > 0.05 * ptp
-
-        # The contrast guard is relative to the signal's own peak-to-peak, so a
-        # pure-noise (no-op swap macro) curve passes it trivially. Require the cosine
-        # to also beat a constant model: R^2 of the fit vs the mean. Noise-fitting
-        # gives R^2 ~ 0.2; a real oscillation gives ~ 0.99 — 0.5 separates cleanly
-        # and is scale-free (works for population and raw-I signals alike).
-        y = np.asarray(fit_data.values, dtype=float)
-        ss_tot = float(np.sum((y - y.mean()) ** 2))
-        r_squared = 1.0 - float(fit_result.chisqr) / ss_tot if ss_tot > 0 else float("nan")
-        quality_ok = np.isfinite(r_squared) and r_squared > 0.5
-
-        success = bool(
-            bool(fit_result.success)
-            and np.isfinite(nyquist)
-            and 0 < p["f"] <= nyquist
-            and contrast_ok
-            and quality_ok
-        )
-
-        # Dense fit curve for plotting: the sweep has only a handful of integer-N
-        # points, so the best-fit sampled there draws as a jagged polyline. Evaluate
-        # the fitted cosine on a fine grid to render a smooth line.
-        round_dense = np.linspace(rounds.min(), rounds.max(), 501)
-        best_fit_dense = np.asarray(fit_result.eval(x=round_dense), dtype=float)
-
-        return {
-            "a": p["a"],
-            "f": p["f"],
-            "phi": p["phi"],
-            "c": p["c"],
-            "swap_period": float(swap_period),
-            "r_squared": float(r_squared),
-            "success": success,
-            "best_fit": fit_result.best_fit,
-            "round_dense": round_dense,
-            "best_fit_dense": best_fit_dense,
-            "fit_report": fit_result.fit_report(),
-        }
+        fit = fit_swap_oscillation(rounds, np.asarray(signal.values, dtype=float))
+        # `round` is this estimator's axis name for the shared helper's generic `x`.
+        fit["round_dense"] = fit.pop("x_dense")
+        return fit
 
     def extract_metadata(self, results: Dict[str, Any]) -> Dict[str, Any]:
         """Persist the fit parameters and swap period; drop the diagnostic arrays."""
