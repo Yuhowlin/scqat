@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "scqat"
-version = "0.22.0"  # MUST equal the release tag (tag vX.Y.Z <-> version X.Y.Z); bump BEFORE tagging.
+version = "0.23.0"  # MUST equal the release tag (tag vX.Y.Z <-> version X.Y.Z); bump BEFORE tagging.
                    # Dependents pin real floors (scqo: "scqat>=0.1.5") via importlib.metadata, so a tag
                    # whose tree still says the old version breaks their installs. (Tags v0.1.0-v0.1.4
                    # all shipped metadata 0.1.0 -- floors only work from v0.1.5 on.)
