@@ -19,6 +19,23 @@ The per-trace fit is :func:`scqat.tools.fit_cosine.fit_swap_oscillation`, shared
 with ``swap_oscillation`` -- a numerical routine, reused freely; the MODEL claim
 (that this map is theta(knob)) is what this estimator owns.
 
+WHAT ``theta_rad`` IS, precisely. It is the PER-ROUND COMPOSITE half-angle, not
+necessarily the exchange angle. Between swaps the two members accumulate a
+relative phase ``phi``, and an exchange followed by a Z rotation does not
+commute, so the repeated unit is a rotation with
+
+    cos(theta_rad) = cos(phi/2) * cos(theta_exchange)
+
+Hence ``theta_rad >= theta_exchange`` ALWAYS -- an uncompensated phase can only
+INFLATE the reported angle -- and the oscillation contrast falls as phi grows.
+The caller nulls phi with an AC-Stark compensation tone (scqo's
+``compensation_amps``); the exchange angle is the MINIMUM of ``theta_rad`` over
+that compensation, and that minimum is immune to decoherence because decay
+changes the oscillation's amplitude, not its frequency. Measured on 5Q4C
+2026-09-01: at zero coupler amplitude, where the swap is physically identical,
+changing the inter-swap gap from 0 to 20 ns moved this number from 0.993 to
+1.561 rad. Do not read it as the exchange angle without establishing phi.
+
 Record-only: the SUCCESS / ``min_transfer`` verdict stays in SCQO, and nothing is
 written to the device.
 
