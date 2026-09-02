@@ -49,10 +49,12 @@ from scqat.estimators.broadband_qubit_spectroscopy import (
 )
 from scqat.estimators.xyz_delay import XyzDelayEstimator
 from scqat.estimators.qubit_stark_phase_echo import QubitStarkPhaseEchoEstimator
+from scqat.estimators.crosstalk_compensated_sqrb import CrosstalkCompensatedSQRBEstimator
 
 __all__ = [
     "BroadbandQubitSpectroscopyEstimator",
     "BroadbandResonatorSpectroscopyEstimator",
+    "CrosstalkCompensatedSQRBEstimator",
     "QubitDecoherenceEstimator",
     "StateDiscriminationEstimator",
     "RamseyEstimator",
