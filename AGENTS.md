@@ -6,9 +6,12 @@ its workflow rules assume a shared, live checkout.
 
 ## What this repo is
 
-scqat is the **analysis half** of the scqo stack: one estimator per experiment, plus the
-shared fitters and tools they use. It is a plain pip-installable library — it must stay
-importable on its own, with no side effects at import time.
+scqat is the **analysis half** of the scqo stack: one estimator per experiment *and one
+experiment per estimator*, plus the shared fitters and tools they use. An estimator is
+keyed by a READING — a dataset shape and the model fitted to it — so reusing a sibling's
+estimator is never the answer; share math through `tools/` instead. It is a plain
+pip-installable library — it must stay importable on its own, with no side effects at
+import time.
 
 It is the **base of the import arrow**. [SCQO](https://github.com/shiau109/SCQO) consumes
 scqat (lazy-imported from `estimate()`); scqat consumes nothing from SCQO. A change here

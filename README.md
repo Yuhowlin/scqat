@@ -17,8 +17,9 @@ core       →  BaseEstimator ABC + I/O helpers
 
 - **`parsers/`** — read raw files (HDF5, …) into an `xarray.Dataset`. No analysis.
   `from scqat.parsers import load_xarray_h5, repetition_data, parse_timestamp`
-- **`estimators/`** — one `BaseEstimator` subclass per experiment (Ramsey, state
-  discrimination, …). Output **metadata** (JSON) + **plot data** (netCDF).
+- **`estimators/`** — one `BaseEstimator` subclass per experiment, and one experiment per
+  subclass (Ramsey, state discrimination, …). Output **metadata** (JSON) + **plot data**
+  (netCDF).
   `from scqat.estimators import RamseyEstimator`
 - **`tools/`** — shared, pure fitters/algorithms, discoverable via `get_fitter('<name>')`.
 - **`workflows/`** — multi-estimator orchestration pipelines.
