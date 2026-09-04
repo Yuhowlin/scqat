@@ -14,7 +14,11 @@ authors = [
 ]
 readme = "README.md"
 license = { text = "BSD-3-Clause" }
-requires-python = ">=3.9"
+# The combo window: SCQO, scqo-qm and scqo-qblox all pin this. An unbounded floor let
+# `uv run` build scqat/.venv on Python 3.14 while every other environment in the stack was
+# 3.12.13 or 3.11.15 - the analysis half tested on a Python the rest cannot install on.
+# CI covers 3.12 + 3.10; 3.9 was never in the matrix. See SCQO/ENVIRONMENTS.md.
+requires-python = ">=3.10,<3.13"
 dependencies = [
     "numpy>=1.24.0",
     "scipy>=1.13.0",

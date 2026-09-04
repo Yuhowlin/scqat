@@ -4,6 +4,13 @@ __pycache__/
 *.pyo
 *.pyd
 
+# Environments. A uv-created venv already self-ignores (uv writes .venv/.gitignore = "*"),
+# so this covers the hand-made `python -m venv` case. The repo-local .venv here is uv's
+# project env and is where the tests run - see ENVIRONMENTS.md.
+.venv*/
+venv/
+env/
+
 # Personal workspace - NOT part of the published library. These trees hold the
 # maintainer's exploration against real lab runs (absolute data paths, saved
 # figures, throwaway scripts) and are kept locally, never published.

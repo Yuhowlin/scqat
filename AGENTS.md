@@ -57,12 +57,15 @@ scqat must sit **as a sibling** of SCQO under one parent, under its own name —
 resolves it as `{ path = "../scqat" }`:
 
 ```bash
-cd <parent>
-uv venv .venv --python 3.12
-uv pip install --python .venv/bin/python -e ./scqat -e "./SCQO[viewer]" pytest
+cd scqat
+uv run --extra dev pytest tests/ -q     # builds scqat/.venv from pyproject on first use
 ```
 
-Windows: `.venv\Scripts\python.exe`.
+That is the whole setup — **scqat needs no sibling checkout to test itself**; it is the base
+of the import arrow. The sibling requirement above is the CONSUMER's: SCQO resolves scqat as
+`{ path = "../scqat" }`.
+
+Which environment for which repo: [ENVIRONMENTS.md](ENVIRONMENTS.md).
 
 ## Testing
 
@@ -72,7 +75,8 @@ uv run --extra dev pytest tests/test_<name>_estimator.py -q
 
 **`--extra dev` is required** — pytest is an optional extra, so bare `uv run pytest`
 dies with `Failed to spawn: pytest`. Tests are named after what they test, so select by
-**file name**, not `-k`.
+**file name**, not `-k`. This runs in `scqat/.venv`, uv's project env, on the same
+**3.10–3.12** window as the rest of the combo ([ENVIRONMENTS.md](ENVIRONMENTS.md)).
 
 Blast radius follows the import arrow: an estimator edit is local; a `tools/` edit
 reaches **every consuming family** — the generated table in `CLAUDE.md` lists them, and
