@@ -16,6 +16,7 @@ from scqat.estimators.readout_fidelity.visualization import (
     plot_norm_res_vs_sweep,
     plot_fidelity_vs_sweep,
     plot_means_on_iq_plane,
+    plot_response_vs_frequency,
 )
 
 
@@ -470,7 +471,117 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
     (fidelity under ``method="gmm"``, centre separation under ``"average"`` —
     both peak at the best detuning).
 
+    Also extracts the dressed resonator frequencies for states |0> and |1>
+    (``detuning_dress0``, ``detuning_dress1``) and dispersive shift ``chi``
+    from the transmission response dips of |g> and |e>.
+
     Ported from qcat ``readout_freq.ROFidelityFreq``.
     """
     estimator_name = "readout_freq_fidelity"
     sweep_coord = "frequency"
+
+    @staticmethod
+    def _find_dip(sweep: np.ndarray, signal: np.ndarray) -> Optional[float]:
+        """Find the dip (minimum) of signal vs sweep with sub-bin parabolic refinement."""
+        if sweep is None or signal is None or len(sweep) == 0:
+            return None
+        finite = np.isfinite(signal)
+        if not np.any(finite):
+            return None
+        idx = int(np.nanargmin(signal))
+        x0 = float(sweep[idx])
+        if 0 < idx < len(signal) - 1:
+            x_pts = sweep[idx - 1 : idx + 2]
+            y_pts = signal[idx - 1 : idx + 2]
+            if np.all(np.isfinite(y_pts)):
+                try:
+                    poly = np.polyfit(x_pts, y_pts, 2)
+                    if poly[0] > 0:  # concave up (minimum)
+                        x_min = -poly[1] / (2.0 * poly[0])
+                        if min(x_pts[0], x_pts[2]) <= x_min <= max(x_pts[0], x_pts[2]):
+                            x0 = float(x_min)
+                except Exception:
+                    pass
+        return x0
+
+    def _extract_dressed_dips(
+        self, results: Dict[str, Any], dataset: xr.Dataset, **kwargs
+    ) -> None:
+        mean = results.get("mean")
+        sweep = results.get("sweep_values")
+        if mean is None or sweep is None or mean.shape[1] < 2:
+            results["detuning_dress0"] = None
+            results["detuning_dress1"] = None
+            results["chi"] = None
+            return
+
+        iq_abs_0 = np.linalg.norm(mean[:, 0, :], axis=-1)
+        iq_abs_1 = np.linalg.norm(mean[:, 1, :], axis=-1)
+
+        dip0 = self._find_dip(sweep, iq_abs_0)
+        dip1 = self._find_dip(sweep, iq_abs_1)
+
+        results["detuning_dress0"] = dip0
+        results["detuning_dress1"] = dip1
+
+        if dip0 is not None and dip1 is not None and np.isfinite(dip0) and np.isfinite(dip1):
+            results["chi"] = float((dip0 - dip1) / 2.0)
+        else:
+            results["chi"] = None
+
+        twin = results.get("twin_values")
+        if twin is not None and len(twin) == len(sweep) and len(sweep) > 1:
+            if dip0 is not None and np.isfinite(dip0):
+                results["full_freq_dress0"] = float(np.interp(dip0, sweep, twin))
+            if dip1 is not None and np.isfinite(dip1):
+                results["full_freq_dress1"] = float(np.interp(dip1, sweep, twin))
+
+    def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
+        results = super().extract_parameters(dataset, **kwargs)
+        self._extract_dressed_dips(results, dataset, **kwargs)
+        return results
+
+    def extract_metadata(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = super().extract_metadata(results)
+        for key in (
+            "detuning_dress0",
+            "detuning_dress1",
+            "chi",
+            "full_freq_dress0",
+            "full_freq_dress1",
+        ):
+            if key in results:
+                val = results[key]
+                metadata[key] = float(val) if val is not None and np.isfinite(val) else None
+        return metadata
+
+    def build_plot_data(
+        self, dataset: xr.Dataset, results: Dict[str, Any], **kwargs
+    ) -> xr.Dataset:
+        plot_data = super().build_plot_data(dataset, results, **kwargs)
+        for key in (
+            "detuning_dress0",
+            "detuning_dress1",
+            "chi",
+            "full_freq_dress0",
+            "full_freq_dress1",
+        ):
+            val = results.get(key)
+            if val is not None and np.isfinite(val):
+                plot_data.attrs[key] = float(val)
+        return plot_data
+
+    def generate_figures(
+        self,
+        dataset: xr.Dataset,
+        results: Dict[str, Any],
+        plot_data: Optional[xr.Dataset] = None,
+        **kwargs,
+    ) -> Dict[str, plt.Figure]:
+        figs = super().generate_figures(dataset, results, plot_data=plot_data, **kwargs)
+        if plot_data is None:
+            plot_data = self.build_plot_data(dataset, results, **kwargs)
+        if "mean" in plot_data:
+            figs["response"] = plot_response_vs_frequency(plot_data)
+        return figs
+

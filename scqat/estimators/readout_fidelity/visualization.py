@@ -27,6 +27,7 @@ attrs  : ``sweep_coord``, ``method``, ``metric``, and (when a best point was
 """
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 from scqat.estimators._twin_axis import add_twin_axis
 
@@ -185,3 +186,46 @@ def plot_means_on_iq_plane(plot_data):
     fig.tight_layout()
     plt.close(fig)
     return fig
+
+
+def plot_response_vs_frequency(plot_data):
+    """Resonator transmission magnitude |IQ| for states |g> and |e> vs frequency.
+
+    Displays the response curve dips corresponding to f_dress0 (|g>) and f_dress1 (|e>),
+    along with vertical markers for the dips and the optimal readout frequency."""
+    coord, sweep = _sweep(plot_data)
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
+
+    if 'mean' in plot_data:
+        mean = plot_data['mean'].values  # (sweep, center, iq)
+        if mean.ndim == 3 and mean.shape[1] >= 2:
+            iq_abs_g = np.linalg.norm(mean[:, 0, :], axis=-1)
+            iq_abs_e = np.linalg.norm(mean[:, 1, :], axis=-1)
+            ax.plot(sweep, iq_abs_g, 'o-', color='tab:blue', label='|g> (|0>)')
+            ax.plot(sweep, iq_abs_e, 's-', color='tab:orange', label='|e> (|1>)')
+
+    dip0 = plot_data.attrs.get('detuning_dress0')
+    if dip0 is not None and np.isfinite(dip0):
+        ax.axvline(dip0, color='tab:blue', ls='--', lw=1.5,
+                   label=f'g dip: {dip0:.4g}')
+
+    dip1 = plot_data.attrs.get('detuning_dress1')
+    if dip1 is not None and np.isfinite(dip1):
+        ax.axvline(dip1, color='tab:orange', ls='--', lw=1.5,
+                   label=f'e dip: {dip1:.4g}')
+
+    best = plot_data.attrs.get('best_sweep_value')
+    if best is not None and np.isfinite(best):
+        ax.axvline(best, color='red', ls=':', lw=1.5,
+                   label=f'opt readout: {best:.4g}')
+
+    ax.set_xlabel(coord, fontsize=14)
+    ax.set_ylabel('|IQ| magnitude', fontsize=14)
+    ax.set_title('Resonator response |IQ| vs frequency')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    _add_twin(ax, plot_data, sweep)
+    fig.tight_layout()
+    plt.close(fig)
+    return fig
+

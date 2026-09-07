@@ -255,3 +255,48 @@ class TestAverageMethod:
                                     plot_data=est.build_plot_data(ds, results))
         assert all(isinstance(f, plt.Figure) for f in figs.values())
         plt.close("all")
+
+
+class TestReadoutFreqDips:
+    """ReadoutFreqFidelityEstimator dressed dip extraction and response plotting."""
+
+    def _make_dip_ds(self, dip0=-0.5e6, dip1=0.5e6, n_sweep=31):
+        sweep = np.linspace(-2e6, 2e6, n_sweep)
+        gamma = 0.3e6
+        I = np.empty((n_sweep, 2))
+        Q = np.zeros((n_sweep, 2))
+        for i, f in enumerate(sweep):
+            I[i, 0] = 1.0 - 0.7 / (1.0 + ((f - dip0) / gamma) ** 2)
+            I[i, 1] = 1.0 - 0.7 / (1.0 + ((f - dip1) / gamma) ** 2)
+        return xr.Dataset(
+            {"I": (["frequency", "prepared_state"], I),
+             "Q": (["frequency", "prepared_state"], Q)},
+            coords={"frequency": sweep, "prepared_state": [0, 1]},
+        )
+
+    def test_extract_dips_and_chi(self):
+        dip0 = -0.6e6
+        dip1 = 0.4e6
+        ds = self._make_dip_ds(dip0=dip0, dip1=dip1)
+        est = ReadoutFreqFidelityEstimator()
+        res = est.extract_parameters(ds, method="average")
+
+        assert res["detuning_dress0"] == pytest.approx(dip0, abs=5e4)
+        assert res["detuning_dress1"] == pytest.approx(dip1, abs=5e4)
+        expected_chi = (dip0 - dip1) / 2.0
+        assert res["chi"] == pytest.approx(expected_chi, abs=5e4)
+
+        # Metadata carries the scalar dip results
+        meta = est.extract_metadata(res)
+        assert meta["detuning_dress0"] == pytest.approx(dip0, abs=5e4)
+        assert meta["detuning_dress1"] == pytest.approx(dip1, abs=5e4)
+        assert meta["chi"] == pytest.approx(expected_chi, abs=5e4)
+
+    def test_response_figure_generated(self, tmp_path):
+        ds = self._make_dip_ds()
+        est = ReadoutFreqFidelityEstimator()
+        _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average")
+        assert "response" in figs
+        assert isinstance(figs["response"], plt.Figure)
+        plt.close("all")
+
