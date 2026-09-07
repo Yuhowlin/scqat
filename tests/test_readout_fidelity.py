@@ -274,29 +274,74 @@ class TestReadoutFreqDips:
             coords={"frequency": sweep, "prepared_state": [0, 1]},
         )
 
-    def test_extract_dips_and_chi(self):
+    def test_default_dip_fit_method_is_none(self, tmp_path):
+        """Default dip_fit_method is 'none': skips dip fitting and produces no response plot."""
+        ds = self._make_dip_ds()
+        est = ReadoutFreqFidelityEstimator()
+        res = est.extract_parameters(ds, method="average")
+        assert res["dip_fit_method"] == "none"
+        assert res.get("detuning_dress0") is None
+        assert res.get("detuning_dress1") is None
+        assert res.get("chi") is None
+
+        meta = est.extract_metadata(res)
+        assert "detuning_dress0" not in meta
+        assert "chi" not in meta
+
+        _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average")
+        assert "response" not in figs
+        plt.close("all")
+
+    def test_dip_fit_method_lorentzian(self, tmp_path):
+        """dip_fit_method='lorentzian' extracts dips, chi, and generates response plot."""
         dip0 = -0.6e6
         dip1 = 0.4e6
         ds = self._make_dip_ds(dip0=dip0, dip1=dip1)
         est = ReadoutFreqFidelityEstimator()
-        res = est.extract_parameters(ds, method="average")
+        res = est.extract_parameters(ds, method="average", dip_fit_method="lorentzian")
 
+        assert res["dip_fit_method"] == "lorentzian"
         assert res["detuning_dress0"] == pytest.approx(dip0, abs=5e4)
         assert res["detuning_dress1"] == pytest.approx(dip1, abs=5e4)
         expected_chi = (dip0 - dip1) / 2.0
         assert res["chi"] == pytest.approx(expected_chi, abs=5e4)
 
-        # Metadata carries the scalar dip results
         meta = est.extract_metadata(res)
+        assert meta["dip_fit_method"] == "lorentzian"
         assert meta["detuning_dress0"] == pytest.approx(dip0, abs=5e4)
         assert meta["detuning_dress1"] == pytest.approx(dip1, abs=5e4)
         assert meta["chi"] == pytest.approx(expected_chi, abs=5e4)
 
-    def test_response_figure_generated(self, tmp_path):
-        ds = self._make_dip_ds()
-        est = ReadoutFreqFidelityEstimator()
-        _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average")
+        _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average", dip_fit_method="lorentzian")
         assert "response" in figs
         assert isinstance(figs["response"], plt.Figure)
         plt.close("all")
+
+    def test_dip_fit_method_circle(self, tmp_path):
+        """dip_fit_method='circle' fits complex S21 using full_freq."""
+        dip0 = -0.5e6
+        dip1 = 0.5e6
+        ds = self._make_dip_ds(dip0=dip0, dip1=dip1)
+        full_freq = ds["frequency"].values + 6.0e9
+        ds = ds.assign_coords(full_freq=("frequency", full_freq))
+
+        est = ReadoutFreqFidelityEstimator()
+        res = est.extract_parameters(ds, method="average", dip_fit_method="circle")
+        assert res["dip_fit_method"] == "circle"
+        assert res["detuning_dress0"] is not None
+        assert res["detuning_dress1"] is not None
+        assert res["chi"] is not None
+        assert "full_freq_dress0" in res
+        assert "full_freq_dress1" in res
+
+        _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average", dip_fit_method="circle")
+        assert "response" in figs
+        plt.close("all")
+
+    def test_unknown_dip_fit_method_raises(self):
+        ds = self._make_dip_ds()
+        est = ReadoutFreqFidelityEstimator()
+        with pytest.raises(ValueError, match="dip_fit_method"):
+            est.extract_parameters(ds, dip_fit_method="invalid_mode")
+
 

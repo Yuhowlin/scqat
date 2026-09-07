@@ -6,6 +6,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 
 from scqat.core.base_estimator import BaseEstimator
+from scqat.tools.dip_fit import fit_dip
 from scqat.estimators.state_discrimination import state_iq_arrays
 from scqat.estimators._twin_axis import TWIN_KNOBS, twin_values
 from scqat.estimators.readout_fidelity.methods import METHODS, ReadoutFidelityMethod
@@ -471,9 +472,10 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
     (fidelity under ``method="gmm"``, centre separation under ``"average"`` —
     both peak at the best detuning).
 
-    Also extracts the dressed resonator frequencies for states |0> and |1>
+    Optionally fits the dressed resonator frequencies for states |0> and |1>
     (``detuning_dress0``, ``detuning_dress1``) and dispersive shift ``chi``
-    from the transmission response dips of |g> and |e>.
+    when ``dip_fit_method`` is set to ``"lorentzian"`` or ``"circle"``.
+    Defaults to ``"none"``, which skips dip fitting and produces no response figure.
 
     Ported from qcat ``readout_freq.ROFidelityFreq``.
     """
@@ -505,7 +507,7 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
         return x0
 
     def _extract_dressed_dips(
-        self, results: Dict[str, Any], dataset: xr.Dataset, **kwargs
+        self, results: Dict[str, Any], dataset: xr.Dataset, method: str = "lorentzian", **knobs
     ) -> None:
         mean = results.get("mean")
         sweep = results.get("sweep_values")
@@ -515,11 +517,34 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
             results["chi"] = None
             return
 
-        iq_abs_0 = np.linalg.norm(mean[:, 0, :], axis=-1)
-        iq_abs_1 = np.linalg.norm(mean[:, 1, :], axis=-1)
+        iq_0 = mean[:, 0, 0] + 1j * mean[:, 0, 1]
+        iq_1 = mean[:, 1, 0] + 1j * mean[:, 1, 1]
 
-        dip0 = self._find_dip(sweep, iq_abs_0)
-        dip1 = self._find_dip(sweep, iq_abs_1)
+        full_freq = None
+        if "full_freq" in dataset.coords:
+            full_freq = np.asarray(dataset.coords["full_freq"].values, dtype=float)
+            if full_freq.ndim > 1:
+                full_freq = full_freq.ravel()
+        elif "twin_values" in results and results["twin_values"] is not None:
+            full_freq = np.asarray(results["twin_values"], dtype=float)
+
+        try:
+            res_0 = fit_dip(sweep, iq_0, full_freq=full_freq, method=method, **knobs)
+            dip0 = float(res_0["detuning"])
+            if "full_freq" in res_0:
+                results["full_freq_dress0"] = float(res_0["full_freq"])
+            results["fwhm_dress0"] = float(res_0.get("fwhm", np.nan))
+        except Exception:
+            dip0 = self._find_dip(sweep, np.abs(iq_0))
+
+        try:
+            res_1 = fit_dip(sweep, iq_1, full_freq=full_freq, method=method, **knobs)
+            dip1 = float(res_1["detuning"])
+            if "full_freq" in res_1:
+                results["full_freq_dress1"] = float(res_1["full_freq"])
+            results["fwhm_dress1"] = float(res_1.get("fwhm", np.nan))
+        except Exception:
+            dip1 = self._find_dip(sweep, np.abs(iq_1))
 
         results["detuning_dress0"] = dip0
         results["detuning_dress1"] = dip1
@@ -529,46 +554,66 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
         else:
             results["chi"] = None
 
-        twin = results.get("twin_values")
-        if twin is not None and len(twin) == len(sweep) and len(sweep) > 1:
-            if dip0 is not None and np.isfinite(dip0):
-                results["full_freq_dress0"] = float(np.interp(dip0, sweep, twin))
-            if dip1 is not None and np.isfinite(dip1):
-                results["full_freq_dress1"] = float(np.interp(dip1, sweep, twin))
+        if "full_freq_dress0" not in results and full_freq is not None and dip0 is not None and np.isfinite(dip0):
+            results["full_freq_dress0"] = float(np.interp(dip0, sweep, full_freq))
+        if "full_freq_dress1" not in results and full_freq is not None and dip1 is not None and np.isfinite(dip1):
+            results["full_freq_dress1"] = float(np.interp(dip1, sweep, full_freq))
 
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
+        dip_fit_method = kwargs.pop("dip_fit_method", "none")
+        if dip_fit_method is None:
+            dip_fit_method = "none"
+        if dip_fit_method not in ("none", "lorentzian", "circle"):
+            raise ValueError(
+                f"Unknown dip_fit_method {dip_fit_method!r}; valid: ['none', 'lorentzian', 'circle']"
+            )
+        dip_knobs = {}
+        for k in ("baseline_order", "delay"):
+            if k in kwargs:
+                dip_knobs[k] = kwargs.pop(k)
+
         results = super().extract_parameters(dataset, **kwargs)
-        self._extract_dressed_dips(results, dataset, **kwargs)
+        results["dip_fit_method"] = dip_fit_method
+        if dip_fit_method != "none":
+            self._extract_dressed_dips(results, dataset, method=dip_fit_method, **dip_knobs)
         return results
 
     def extract_metadata(self, results: Dict[str, Any]) -> Dict[str, Any]:
         metadata = super().extract_metadata(results)
-        for key in (
-            "detuning_dress0",
-            "detuning_dress1",
-            "chi",
-            "full_freq_dress0",
-            "full_freq_dress1",
-        ):
-            if key in results:
-                val = results[key]
-                metadata[key] = float(val) if val is not None and np.isfinite(val) else None
+        dip_method = results.get("dip_fit_method", "none")
+        if dip_method in ("lorentzian", "circle"):
+            metadata["dip_fit_method"] = dip_method
+            for key in (
+                "detuning_dress0",
+                "detuning_dress1",
+                "chi",
+                "full_freq_dress0",
+                "full_freq_dress1",
+                "fwhm_dress0",
+                "fwhm_dress1",
+            ):
+                if key in results:
+                    val = results[key]
+                    metadata[key] = float(val) if val is not None and np.isfinite(val) else None
         return metadata
 
     def build_plot_data(
         self, dataset: xr.Dataset, results: Dict[str, Any], **kwargs
     ) -> xr.Dataset:
         plot_data = super().build_plot_data(dataset, results, **kwargs)
-        for key in (
-            "detuning_dress0",
-            "detuning_dress1",
-            "chi",
-            "full_freq_dress0",
-            "full_freq_dress1",
-        ):
-            val = results.get(key)
-            if val is not None and np.isfinite(val):
-                plot_data.attrs[key] = float(val)
+        dip_method = results.get("dip_fit_method", "none")
+        plot_data.attrs["dip_fit_method"] = str(dip_method)
+        if dip_method in ("lorentzian", "circle"):
+            for key in (
+                "detuning_dress0",
+                "detuning_dress1",
+                "chi",
+                "full_freq_dress0",
+                "full_freq_dress1",
+            ):
+                val = results.get(key)
+                if val is not None and np.isfinite(val):
+                    plot_data.attrs[key] = float(val)
         return plot_data
 
     def generate_figures(
@@ -581,7 +626,8 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
         figs = super().generate_figures(dataset, results, plot_data=plot_data, **kwargs)
         if plot_data is None:
             plot_data = self.build_plot_data(dataset, results, **kwargs)
-        if "mean" in plot_data:
+        dip_method = plot_data.attrs.get("dip_fit_method") or results.get("dip_fit_method", "none")
+        if dip_method in ("lorentzian", "circle") and "mean" in plot_data:
             figs["response"] = plot_response_vs_frequency(plot_data)
         return figs
 
