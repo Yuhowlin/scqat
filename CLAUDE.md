@@ -353,7 +353,7 @@ every family listed beside it; run those families' test files too.
 | `ade_decay` | qubit_t1_ade |
 | `allan` | qubit_t1_bayesian |
 | `dip_finder` | broadband_resonator_spectroscopy |
-| `dip_fit` | resonator_spectroscopy, resonator_spectroscopy_flux, resonator_spectroscopy_power |
+| `dip_fit` | readout_fidelity, resonator_spectroscopy, resonator_spectroscopy_flux, resonator_spectroscopy_power |
 | `discriminate` | parity_switch_continuous, parity_switch_discrete, qubit_tomography, readout_fidelity, state_discrimination |
 | `fit_abscos` | charge_gate_ramsey |
 | `fit_cosine` | pair_swap_angle, power_rabi, swap_oscillation |

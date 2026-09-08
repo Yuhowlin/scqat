@@ -6,7 +6,7 @@ import xarray as xr
 import matplotlib.pyplot as plt
 
 from scqat.core.base_estimator import BaseEstimator
-from scqat.tools.dip_fit import fit_dip
+from scqat.tools.dip_fit import fit_dip, validate_dip_kwargs
 from scqat.estimators.state_discrimination import state_iq_arrays
 from scqat.estimators._twin_axis import TWIN_KNOBS, twin_values
 from scqat.estimators.readout_fidelity.methods import METHODS, ReadoutFidelityMethod
@@ -477,48 +477,53 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
     when ``dip_fit_method`` is set to ``"lorentzian"`` or ``"circle"``.
     Defaults to ``"none"``, which skips dip fitting and produces no response figure.
 
+    A dip that did not fit is ``None``, never a cruder substitute, and
+    ``dip_fit_success`` says whether BOTH dips converged — these values become
+    resonator facts downstream, so an unconverged centre must not be readable as
+    a measurement.
+
     Ported from qcat ``readout_freq.ROFidelityFreq``.
     """
     estimator_name = "readout_freq_fidelity"
     sweep_coord = "frequency"
 
     @staticmethod
-    def _find_dip(sweep: np.ndarray, signal: np.ndarray) -> Optional[float]:
-        """Find the dip (minimum) of signal vs sweep with sub-bin parabolic refinement."""
-        if sweep is None or signal is None or len(sweep) == 0:
+    def _fit_one_dip(sweep, iq, full_freq, method: str, knobs: Dict[str, Any]
+                     ) -> Optional[Dict[str, Any]]:
+        """One prepared state's dip, or ``None`` when the fit did not deliver one.
+
+        ``fit_dip`` publishes a ``success`` flag precisely so that a caller
+        cannot pass an unconverged centre off as a measurement, and these dips
+        leave here as resonator FACTS (``f_dress0_hz`` / ``f_dress1_hz`` /
+        ``chi_hz`` downstream, written into the device by the consuming node).
+        So a raise and a ``success=False`` are the same answer — no dip — and
+        NEITHER is replaced by a cruder estimate: a missing quantity is missing,
+        and a silent stand-in would be indistinguishable from a real fit.
+
+        The knobs are validated by the caller BEFORE any fitting, so an unknown
+        method or knob still raises out of here rather than reading as a dip
+        that failed.
+        """
+        try:
+            res = fit_dip(sweep, iq, full_freq=full_freq, method=method, **knobs)
+        except Exception:
             return None
-        finite = np.isfinite(signal)
-        if not np.any(finite):
-            return None
-        idx = int(np.nanargmin(signal))
-        x0 = float(sweep[idx])
-        if 0 < idx < len(signal) - 1:
-            x_pts = sweep[idx - 1 : idx + 2]
-            y_pts = signal[idx - 1 : idx + 2]
-            if np.all(np.isfinite(y_pts)):
-                try:
-                    poly = np.polyfit(x_pts, y_pts, 2)
-                    if poly[0] > 0:  # concave up (minimum)
-                        x_min = -poly[1] / (2.0 * poly[0])
-                        if min(x_pts[0], x_pts[2]) <= x_min <= max(x_pts[0], x_pts[2]):
-                            x0 = float(x_min)
-                except Exception:
-                    pass
-        return x0
+        return res if bool(res.get("success")) else None
 
     def _extract_dressed_dips(
         self, results: Dict[str, Any], dataset: xr.Dataset, method: str = "lorentzian", **knobs
     ) -> None:
+        # Absent until a fit earns them, so a caller reading these keys after a
+        # failed fit gets None rather than a stale or invented number.
+        results["detuning_dress0"] = None
+        results["detuning_dress1"] = None
+        results["chi"] = None
+        results["dip_fit_success"] = False
+
         mean = results.get("mean")
         sweep = results.get("sweep_values")
         if mean is None or sweep is None or mean.shape[1] < 2:
-            results["detuning_dress0"] = None
-            results["detuning_dress1"] = None
-            results["chi"] = None
             return
-
-        iq_0 = mean[:, 0, 0] + 1j * mean[:, 0, 1]
-        iq_1 = mean[:, 1, 0] + 1j * mean[:, 1, 1]
 
         full_freq = None
         if "full_freq" in dataset.coords:
@@ -528,36 +533,25 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
         elif "twin_values" in results and results["twin_values"] is not None:
             full_freq = np.asarray(results["twin_values"], dtype=float)
 
-        try:
-            res_0 = fit_dip(sweep, iq_0, full_freq=full_freq, method=method, **knobs)
-            dip0 = float(res_0["detuning"])
-            if "full_freq" in res_0:
-                results["full_freq_dress0"] = float(res_0["full_freq"])
-            results["fwhm_dress0"] = float(res_0.get("fwhm", np.nan))
-        except Exception:
-            dip0 = self._find_dip(sweep, np.abs(iq_0))
+        # Per-state rather than all-or-nothing, the same split _punchout uses: a
+        # trace whose |1> branch is too shallow to fit still measured |0>
+        # honestly, and withholding that would discard good physics.
+        for state, tag in ((0, "dress0"), (1, "dress1")):
+            iq = mean[:, state, 0] + 1j * mean[:, state, 1]
+            res = self._fit_one_dip(sweep, iq, full_freq, method, knobs)
+            if res is None:
+                continue
+            results[f"detuning_{tag}"] = float(res["detuning"])
+            results[f"fwhm_{tag}"] = float(res.get("fwhm", np.nan))
+            if "full_freq" in res:  # fit_dip's own common post-step
+                results[f"full_freq_{tag}"] = float(res["full_freq"])
 
-        try:
-            res_1 = fit_dip(sweep, iq_1, full_freq=full_freq, method=method, **knobs)
-            dip1 = float(res_1["detuning"])
-            if "full_freq" in res_1:
-                results["full_freq_dress1"] = float(res_1["full_freq"])
-            results["fwhm_dress1"] = float(res_1.get("fwhm", np.nan))
-        except Exception:
-            dip1 = self._find_dip(sweep, np.abs(iq_1))
-
-        results["detuning_dress0"] = dip0
-        results["detuning_dress1"] = dip1
-
-        if dip0 is not None and dip1 is not None and np.isfinite(dip0) and np.isfinite(dip1):
+        dip0 = results["detuning_dress0"]
+        dip1 = results["detuning_dress1"]
+        # chi is a DIFFERENCE, so half a pair is not a dispersive shift.
+        results["dip_fit_success"] = dip0 is not None and dip1 is not None
+        if results["dip_fit_success"]:
             results["chi"] = float((dip0 - dip1) / 2.0)
-        else:
-            results["chi"] = None
-
-        if "full_freq_dress0" not in results and full_freq is not None and dip0 is not None and np.isfinite(dip0):
-            results["full_freq_dress0"] = float(np.interp(dip0, sweep, full_freq))
-        if "full_freq_dress1" not in results and full_freq is not None and dip1 is not None and np.isfinite(dip1):
-            results["full_freq_dress1"] = float(np.interp(dip1, sweep, full_freq))
 
     def extract_parameters(self, dataset: xr.Dataset, **kwargs) -> Dict[str, Any]:
         dip_fit_method = kwargs.pop("dip_fit_method", "none")
@@ -571,6 +565,11 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
         for k in ("baseline_order", "delay"):
             if k in kwargs:
                 dip_knobs[k] = kwargs.pop(k)
+        # BEFORE the slice loop, as dip_fit instructs: a knob that does not
+        # belong to this method is a caller error and must raise here, not
+        # surface later as a dip that mysteriously failed to fit.
+        if dip_fit_method != "none":
+            validate_dip_kwargs(dip_fit_method, dip_knobs)
 
         results = super().extract_parameters(dataset, **kwargs)
         results["dip_fit_method"] = dip_fit_method
@@ -583,6 +582,9 @@ class ReadoutFreqFidelityEstimator(ReadoutFidelityEstimator):
         dip_method = results.get("dip_fit_method", "none")
         if dip_method in ("lorentzian", "circle"):
             metadata["dip_fit_method"] = dip_method
+            # The flag rides WITH the numbers: a reader that sees a dip must be
+            # able to see whether the fit that produced it converged.
+            metadata["dip_fit_success"] = bool(results.get("dip_fit_success"))
             for key in (
                 "detuning_dress0",
                 "detuning_dress1",

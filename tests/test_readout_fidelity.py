@@ -260,14 +260,25 @@ class TestAverageMethod:
 class TestReadoutFreqDips:
     """ReadoutFreqFidelityEstimator dressed dip extraction and response plotting."""
 
-    def _make_dip_ds(self, dip0=-0.5e6, dip1=0.5e6, n_sweep=31):
+    #: absolute centre the detuning axis rides on, so full_freq is realistic.
+    F_CARRIER = 6.0e9
+
+    def _make_dip_ds(self, dip0=-0.5e6, dip1=0.5e6, n_sweep=61, ql=5000.0):
+        """Two notch resonances, one per prepared state, as COMPLEX S21.
+
+        A notch is a circle in the IQ plane, so both methods can be tested on
+        the same data: a magnitude-only trace (Q = 0) is a degenerate circle
+        that ``method="circle"`` cannot fit, and a test built on one would pass
+        only because the failure was swallowed."""
         sweep = np.linspace(-2e6, 2e6, n_sweep)
-        gamma = 0.3e6
         I = np.empty((n_sweep, 2))
-        Q = np.zeros((n_sweep, 2))
-        for i, f in enumerate(sweep):
-            I[i, 0] = 1.0 - 0.7 / (1.0 + ((f - dip0) / gamma) ** 2)
-            I[i, 1] = 1.0 - 0.7 / (1.0 + ((f - dip1) / gamma) ** 2)
+        Q = np.empty((n_sweep, 2))
+        for state, dip in enumerate((dip0, dip1)):
+            f = self.F_CARRIER + sweep
+            f0 = self.F_CARRIER + dip
+            s21 = 1.0 - 0.7 / (1.0 + 2j * ql * (f - f0) / f0)
+            I[:, state] = np.real(s21)
+            Q[:, state] = np.imag(s21)
         return xr.Dataset(
             {"I": (["frequency", "prepared_state"], I),
              "Q": (["frequency", "prepared_state"], Q)},
@@ -287,6 +298,7 @@ class TestReadoutFreqDips:
         meta = est.extract_metadata(res)
         assert "detuning_dress0" not in meta
         assert "chi" not in meta
+        assert "dip_fit_success" not in meta  # nothing was attempted
 
         _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average")
         assert "response" not in figs
@@ -301,16 +313,20 @@ class TestReadoutFreqDips:
         res = est.extract_parameters(ds, method="average", dip_fit_method="lorentzian")
 
         assert res["dip_fit_method"] == "lorentzian"
-        assert res["detuning_dress0"] == pytest.approx(dip0, abs=5e4)
-        assert res["detuning_dress1"] == pytest.approx(dip1, abs=5e4)
+        assert res["dip_fit_success"] is True
+        # tight on purpose: the old crude fallback landed inside a loose window,
+        # so a loose tolerance could not tell a real fit from a stand-in
+        assert res["detuning_dress0"] == pytest.approx(dip0, abs=1e3)
+        assert res["detuning_dress1"] == pytest.approx(dip1, abs=1e3)
         expected_chi = (dip0 - dip1) / 2.0
-        assert res["chi"] == pytest.approx(expected_chi, abs=5e4)
+        assert res["chi"] == pytest.approx(expected_chi, abs=1e3)
 
         meta = est.extract_metadata(res)
         assert meta["dip_fit_method"] == "lorentzian"
-        assert meta["detuning_dress0"] == pytest.approx(dip0, abs=5e4)
-        assert meta["detuning_dress1"] == pytest.approx(dip1, abs=5e4)
-        assert meta["chi"] == pytest.approx(expected_chi, abs=5e4)
+        assert meta["dip_fit_success"] is True
+        assert meta["detuning_dress0"] == pytest.approx(dip0, abs=1e3)
+        assert meta["detuning_dress1"] == pytest.approx(dip1, abs=1e3)
+        assert meta["chi"] == pytest.approx(expected_chi, abs=1e3)
 
         _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average", dip_fit_method="lorentzian")
         assert "response" in figs
@@ -322,26 +338,78 @@ class TestReadoutFreqDips:
         dip0 = -0.5e6
         dip1 = 0.5e6
         ds = self._make_dip_ds(dip0=dip0, dip1=dip1)
-        full_freq = ds["frequency"].values + 6.0e9
+        full_freq = ds["frequency"].values + self.F_CARRIER
         ds = ds.assign_coords(full_freq=("frequency", full_freq))
 
         est = ReadoutFreqFidelityEstimator()
         res = est.extract_parameters(ds, method="average", dip_fit_method="circle")
         assert res["dip_fit_method"] == "circle"
-        assert res["detuning_dress0"] is not None
-        assert res["detuning_dress1"] is not None
-        assert res["chi"] is not None
-        assert "full_freq_dress0" in res
-        assert "full_freq_dress1" in res
+        assert res["dip_fit_success"] is True
+        assert res["detuning_dress0"] == pytest.approx(dip0, abs=1e3)
+        assert res["detuning_dress1"] == pytest.approx(dip1, abs=1e3)
+        assert res["chi"] == pytest.approx((dip0 - dip1) / 2.0, abs=1e3)
+        # the absolute centres, which is the whole point of handing it full_freq
+        assert res["full_freq_dress0"] == pytest.approx(self.F_CARRIER + dip0, abs=1e3)
+        assert res["full_freq_dress1"] == pytest.approx(self.F_CARRIER + dip1, abs=1e3)
 
         _, figs = est.analyze(ds, output_dir=str(tmp_path), method="average", dip_fit_method="circle")
         assert "response" in figs
         plt.close("all")
+
+    def test_an_unconverged_dip_is_not_reported(self, monkeypatch):
+        """success=False is NOT a dip. fit_dip returns a centre either way, and
+        these values become resonator facts downstream, so reading the number
+        without the flag would publish an untrustworthy fit as a measurement."""
+        from scqat.estimators.readout_fidelity import estimator as est_mod
+
+        def unconverged(detuning, iq, full_freq=None, method="lorentzian", **knobs):
+            return {"detuning": 1.234e6, "fwhm": 5e5, "success": False, "method": method}
+
+        monkeypatch.setattr(est_mod, "fit_dip", unconverged)
+        ds = self._make_dip_ds()
+        est = ReadoutFreqFidelityEstimator()
+        res = est.extract_parameters(ds, method="average", dip_fit_method="lorentzian")
+
+        assert res["dip_fit_success"] is False
+        assert res["detuning_dress0"] is None and res["detuning_dress1"] is None
+        assert res["chi"] is None
+        assert "fwhm_dress0" not in res            # no half-written leftovers
+        # the rejected centre never leaks under any dressed-dip name
+        assert not [k for k, v in res.items()
+                    if k.endswith(("_dress0", "_dress1")) and v is not None]
+
+    def test_a_raising_dip_fit_is_not_replaced_by_a_guess(self, monkeypatch):
+        """A raise is the same answer as success=False: no dip, no substitute."""
+        from scqat.estimators.readout_fidelity import estimator as est_mod
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("no dip here")
+
+        monkeypatch.setattr(est_mod, "fit_dip", boom)
+        ds = self._make_dip_ds()
+        est = ReadoutFreqFidelityEstimator()
+        res = est.extract_parameters(ds, method="average", dip_fit_method="lorentzian")
+
+        assert res["dip_fit_success"] is False
+        assert res["detuning_dress0"] is None and res["detuning_dress1"] is None
+        assert res["chi"] is None
+        meta = est.extract_metadata(res)
+        assert meta["dip_fit_success"] is False
+        assert meta["detuning_dress0"] is None and meta["chi"] is None
 
     def test_unknown_dip_fit_method_raises(self):
         ds = self._make_dip_ds()
         est = ReadoutFreqFidelityEstimator()
         with pytest.raises(ValueError, match="dip_fit_method"):
             est.extract_parameters(ds, dip_fit_method="invalid_mode")
+
+    def test_a_knob_from_the_other_method_raises(self):
+        """baseline_order belongs to 'lorentzian' only. A caller error must
+        raise rather than surface as a dip that mysteriously failed to fit."""
+        ds = self._make_dip_ds()
+        est = ReadoutFreqFidelityEstimator()
+        with pytest.raises(ValueError, match="baseline_order"):
+            est.extract_parameters(ds, method="average", dip_fit_method="circle",
+                                   baseline_order=1)
 
 
