@@ -71,45 +71,69 @@ class CrosstalkCompensatedSQRBEstimator(BaseEstimator):
         p_grid = np.squeeze(p_grid)
 
         # Convert excited state population P1 to ground state survival P0 = 1 - P1
-        if var_name in ("state", "population"):
+        is_prob = var_name in ("state", "population")
+        if is_prob:
             p_grid = 1.0 - p_grid
 
-        # Locate coarse maximum on 2D grid
-        max_idx = np.unravel_index(np.argmax(p_grid), p_grid.shape)
-        best_amp_coarse = amps[max_idx[0]]
-        best_phase_coarse = phases[max_idx[1]]
-        max_p0 = float(p_grid[max_idx])
+        # Locate coarse optimum on 2D grid:
+        # For probabilities, seek maximum ground-state survival P0 = 1 - P1.
+        # For raw voltage ('I' or 'signal'), locate the extremum relative to the uncompensated baseline.
+        if is_prob:
+            opt_idx = np.unravel_index(np.argmax(p_grid), p_grid.shape)
+        else:
+            base_val = float(np.mean(p_grid[0, :]))
+            max_idx = np.unravel_index(np.argmax(p_grid), p_grid.shape)
+            min_idx = np.unravel_index(np.argmin(p_grid), p_grid.shape)
+            if abs(float(p_grid[max_idx]) - base_val) >= abs(float(p_grid[min_idx]) - base_val):
+                opt_idx = max_idx
+            else:
+                opt_idx = min_idx
+
+        best_amp_coarse = amps[opt_idx[0]]
+        best_phase_coarse = phases[opt_idx[1]]
+        max_p0 = float(p_grid[opt_idx])
 
         # Sub-grid 2D quadratic interpolation if inside boundary
         opt_amp = best_amp_coarse
         opt_phase = best_phase_coarse
-        i, j = max_idx
+        i, j = opt_idx
         if 0 < i < len(amps) - 1 and 0 < j < len(phases) - 1:
             # 1D vertex parabola on amp axis
             y1, y2, y3 = p_grid[i - 1, j], p_grid[i, j], p_grid[i + 1, j]
             d_amp = amps[1] - amps[0]
-            if (2 * y2 - y1 - y3) > 1e-12:
-                delta_i = float(np.clip(0.5 * (y1 - y3) / (y1 - 2 * y2 + y3), -0.5, 0.5))
+            denom_y = float(y1 - 2 * y2 + y3)
+            if abs(denom_y) > 1e-12:
+                delta_i = float(np.clip(0.5 * (y1 - y3) / denom_y, -0.5, 0.5))
                 opt_amp = amps[i] + delta_i * d_amp
 
             # 1D vertex parabola on phase axis
             z1, z2, z3 = p_grid[i, j - 1], p_grid[i, j], p_grid[i, j + 1]
             d_phase = phases[1] - phases[0]
-            if (2 * z2 - z1 - z3) > 1e-12:
-                delta_j = float(np.clip(0.5 * (z1 - z3) / (z1 - 2 * z2 + z3), -0.5, 0.5))
+            denom_z = float(z1 - 2 * z2 + z3)
+            if abs(denom_z) > 1e-12:
+                delta_j = float(np.clip(0.5 * (z1 - z3) / denom_z, -0.5, 0.5))
                 opt_phase = phases[j] + delta_j * d_phase
 
-        return {
+        success = bool(
+            np.isfinite(max_p0) and (max_p0 > 0.5 if is_prob else (np.ptp(p_grid) > 1e-6))
+        )
+
+        min_residual = float(1.0 - max_p0) if is_prob else float(np.min(p_grid))
+
+        res = {
             "mode": "calibrate",
             "optimal_cancel_amp": float(opt_amp),
+            "optimal_init_phase": float(opt_phase),
             "optimal_init_phase_rad": float(opt_phase),
             "optimal_init_phase_deg": float(np.degrees(opt_phase)),
-            "max_population": max_p0,
-            "cancel_amps": amps.tolist(),
-            "init_phases": phases.tolist(),
-            "population_grid": p_grid.tolist(),
-            "success": bool(np.isfinite(max_p0) and max_p0 > 0.5),
+            "min_residual_p1": float(min_residual),
+            "success": success,
+            "suggested_updates": {
+                "cancel_amp": float(opt_amp),
+                "init_phase": float(opt_phase),
+            },
         }
+        return res
 
     def _extract_benchmark(
         self, dataset: xr.Dataset, var_name: str
@@ -229,14 +253,19 @@ class CrosstalkCompensatedSQRBEstimator(BaseEstimator):
         )
 
         if mode == "calibrate":
-            amps = np.asarray(results["cancel_amps"], dtype=float)
-            phases = np.asarray(results["init_phases"], dtype=float)
-            p_grid = np.asarray(results["population_grid"], dtype=float)
+            amps = np.asarray(dataset.coords["cancel_amp"].values, dtype=float)
+            phases = np.asarray(dataset.coords["init_phase"].values, dtype=float)
+            da = dataset[var_name]
+            if "sequence_idx" in da.dims:
+                da = da.mean(dim="sequence_idx")
+            p_grid = np.squeeze(da.values)
             return xr.Dataset(
                 {"population_grid": (("cancel_amp", "init_phase"), p_grid)},
                 coords={"cancel_amp": amps, "init_phase": phases},
-                attrs={"optimal_cancel_amp": results["optimal_cancel_amp"],
-                       "optimal_init_phase_deg": results["optimal_init_phase_deg"]},
+                attrs={
+                    "optimal_cancel_amp": results.get("optimal_cancel_amp", 0.0),
+                    "optimal_init_phase_deg": results.get("optimal_init_phase_deg", 0.0),
+                },
             )
 
         depths = np.asarray(results["depths"], dtype=float)
@@ -277,22 +306,116 @@ class CrosstalkCompensatedSQRBEstimator(BaseEstimator):
 
         mode = results.get("mode", "benchmark")
         if mode == "calibrate":
-            return self._generate_calibration_figure(results)
+            history = None
+            if "stage_history" in dataset.attrs:
+                try:
+                    import json
+                    raw_hist = dataset.attrs["stage_history"]
+                    history = json.loads(raw_hist) if isinstance(raw_hist, str) else raw_hist
+                except Exception:
+                    history = None
+
+            if history and len(history) > 1:
+                figures: Dict[str, plt.Figure] = {}
+                # 1. Multi-panel side-by-side progression plot
+                n_stages = len(history)
+                fig_summary, axes = plt.subplots(1, n_stages, figsize=(5.0 * n_stages, 4.5), squeeze=False)
+                for idx, s in enumerate(history):
+                    ax = axes[0, idx]
+                    s_amps = np.asarray(s.get("cancel_amps", []))
+                    s_phases = np.asarray(s.get("init_phases", []))
+                    s_p = np.asarray(s.get("p_vals", []))
+                    if len(s_amps) > 0 and len(s_phases) > 0 and s_p.size > 0:
+                        im = ax.imshow(
+                            s_p.T,
+                            origin="lower",
+                            extent=[s_amps[0], s_amps[-1], s_phases[0], s_phases[-1]],
+                            aspect="auto",
+                            cmap="viridis",
+                        )
+                        fig_summary.colorbar(im, ax=ax, label="Probe Excitation")
+                    best_a = s.get("best_cancel_amp")
+                    best_p = s.get("best_init_phase")
+                    if best_a is not None and best_p is not None:
+                        ax.plot(best_a, best_p, "r*", markersize=14, label=f"Opt: ({best_a:.4f}, {best_p:.3f})")
+                        ax.legend(loc="upper right", fontsize=8)
+                    ax.set_title(f"Stage {s.get('stage', idx + 1)}: N={s.get('repetitions', '?')}")
+                    ax.set_xlabel("Cancel Amp Scale")
+                    if idx == 0:
+                        ax.set_ylabel("Initial Phase (rad)")
+                fig_summary.tight_layout()
+                figures["summary"] = fig_summary
+
+                # 2. Individual stage detailed plots
+                for idx, s in enumerate(history):
+                    stage_num = s.get("stage", idx + 1)
+                    fig_st, ax_st = plt.subplots(figsize=(7, 5))
+                    s_amps = np.asarray(s.get("cancel_amps", []))
+                    s_phases = np.asarray(s.get("init_phases", []))
+                    s_p = np.asarray(s.get("p_vals", []))
+                    if len(s_amps) > 0 and len(s_phases) > 0 and s_p.size > 0:
+                        im_st = ax_st.imshow(
+                            s_p.T,
+                            origin="lower",
+                            extent=[s_amps[0], s_amps[-1], s_phases[0], s_phases[-1]],
+                            aspect="auto",
+                            cmap="viridis",
+                        )
+                        fig_st.colorbar(im_st, ax=ax_st, label="Probe Excitation P(|1|)")
+                    best_a = s.get("best_cancel_amp")
+                    best_p = s.get("best_init_phase")
+                    if best_a is not None and best_p is not None:
+                        ax_st.plot(best_a, best_p, "r*", markersize=14, label=f"Opt: ({best_a:.4f}, {best_p:.3f} rad)")
+                        ax_st.legend(loc="upper right")
+                    ax_st.set_xlabel("Cancel Amplitude Scale")
+                    ax_st.set_ylabel("Initial Phase (rad)")
+                    ax_st.set_title(f"Crosstalk Calibration Stage {stage_num} (N={s.get('repetitions', '?')})")
+                    fig_st.tight_layout()
+                    figures[f"stage_{stage_num}"] = fig_st
+
+                figures["crosstalk_compensation_calibration"] = fig_summary
+                return figures
+
+            cal_figs = self._generate_calibration_figure(dataset, results)
+            cal_figs["summary"] = cal_figs["crosstalk_compensation_calibration"]
+            return cal_figs
+
         return self._generate_benchmark_figure(plot_data, results)
 
     def _generate_calibration_figure(
-        self, results: Dict[str, Any]
+        self, dataset_or_results: Any, results: Optional[Dict[str, Any]] = None
     ) -> Dict[str, plt.Figure]:
-        fig, ax = plt.subplots(figsize=(7, 5.5), dpi=150)
-        amps = np.asarray(results["cancel_amps"])
-        phases_deg = np.degrees(np.asarray(results["init_phases"]))
-        p_grid = np.asarray(results["population_grid"]).T  # transpose for (phases, amps)
+        if isinstance(dataset_or_results, xr.Dataset):
+            dataset = dataset_or_results
+            res = results or {}
+        else:
+            dataset = None
+            res = dataset_or_results
 
+        fig, ax = plt.subplots(figsize=(7, 5.5), dpi=150)
+        if dataset is not None:
+            amps = np.asarray(dataset.coords["cancel_amp"].values, dtype=float)
+            phases = np.asarray(dataset.coords["init_phase"].values, dtype=float)
+            var_name = (
+                "population"
+                if "population" in dataset.data_vars
+                else ("state" if "state" in dataset.data_vars else ("I" if "I" in dataset.data_vars else "signal"))
+            )
+            da = dataset[var_name]
+            if "sequence_idx" in da.dims:
+                da = da.mean(dim="sequence_idx")
+            p_grid = np.squeeze(da.values).T
+        else:
+            amps = np.asarray(res.get("cancel_amps", []))
+            phases = np.asarray(res.get("init_phases", []))
+            p_grid = np.asarray(res.get("population_grid", [])).T
+
+        phases_deg = np.degrees(phases)
         c = ax.contourf(amps, phases_deg, p_grid, levels=25, cmap="viridis")
         fig.colorbar(c, ax=ax, label="Survival Population P(|0>)")
 
-        opt_a = results["optimal_cancel_amp"]
-        opt_p_deg = results["optimal_init_phase_deg"]
+        opt_a = float(res.get("optimal_cancel_amp", 0.0))
+        opt_p_deg = float(res.get("optimal_init_phase_deg", np.degrees(res.get("optimal_init_phase", 0.0))))
         ax.plot(
             opt_a,
             opt_p_deg,
@@ -314,7 +437,7 @@ class CrosstalkCompensatedSQRBEstimator(BaseEstimator):
     def _generate_benchmark_figure(
         self, plot_data: xr.Dataset, results: Dict[str, Any]
     ) -> Dict[str, plt.Figure]:
-        fig, ax = plt.subplots(figsize=(7, 5), dpi=150)
+        fig, ax = plt.subplots(figsize=(10.2, 5.0), dpi=150)
         depths = np.asarray(plot_data["depth"].values, dtype=float)
 
         style_map = {
@@ -390,7 +513,7 @@ class CrosstalkCompensatedSQRBEstimator(BaseEstimator):
 
         ax.set_title(title_text, fontsize=12, fontweight="bold")
 
-        # Summary info box matching qubit_sqrb style
+        # Summary info box placed outside the axes to prevent blocking data
         info_lines = []
         cond_map = results.get("per_condition", {})
         for cond in ("isolated", "simultaneous", "compensated"):
@@ -403,31 +526,45 @@ class CrosstalkCompensatedSQRBEstimator(BaseEstimator):
                 alpha_err = c_res.get("alpha_stderr", np.nan)
                 if np.isfinite(alpha_err):
                     info_lines.append(
-                        f"{cond.capitalize():12s}: F={fid:.3f}%, r_g={rg:.3e}, r_c={rc:.3e}, α={alpha:.5f}±{alpha_err:.5f}"
+                        f"{cond.capitalize():12s}: F={fid:.3f}%\n"
+                        f"  r_g={rg:.3e}, r_c={rc:.3e}\n"
+                        f"  α={alpha:.5f}±{alpha_err:.5f}"
                     )
                 else:
                     info_lines.append(
-                        f"{cond.capitalize():12s}: F={fid:.3f}%, r_g={rg:.3e}, r_c={rc:.3e}, α={alpha:.5f}"
+                        f"{cond.capitalize():12s}: F={fid:.3f}%\n"
+                        f"  r_g={rg:.3e}, r_c={rc:.3e}\n"
+                        f"  α={alpha:.5f}"
                     )
 
         eta = results.get("mitigation_ratio", np.nan)
         if np.isfinite(eta):
             info_lines.append(f"Mitigation Recovery: {eta * 100:.1f}%")
 
+        ax.grid(True, which="both", linestyle="--", alpha=0.5)
+
+        # Place legend outside axes on the right
+        ax.legend(
+            bbox_to_anchor=(1.03, 1.0),
+            loc="upper left",
+            borderaxespad=0.0,
+            frameon=True,
+            fontsize=8.5,
+        )
+
+        # Place info box outside axes on the right below legend
         if info_lines:
             ax.text(
-                0.05,
-                0.05,
+                1.03,
+                0.46,
                 "\n".join(info_lines),
                 transform=ax.transAxes,
-                fontsize=9,
+                fontsize=8.0,
                 fontfamily="monospace",
-                verticalalignment="bottom",
+                verticalalignment="top",
                 bbox=dict(boxstyle="round,pad=0.5", facecolor="white", alpha=0.9, edgecolor="gray"),
             )
 
-        ax.grid(True, which="both", linestyle="--", alpha=0.5)
-        ax.legend(loc="upper right", frameon=True, fontsize=8.5)
         fig.tight_layout()
         return {"crosstalk_compensated_sqrb": fig}
 
